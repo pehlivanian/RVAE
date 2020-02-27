@@ -134,7 +134,7 @@ class RVAE(nn.Module):
 		nll_loss = 0
 
 		h = Variable(torch.zeros(self.n_rec_layers, x.size(1), self.n_rec_hidden))
-		# At this point x has shape (28, 128, 28)
+		# At this point x has shape (28, 128, 28) or (28, batch_size, 28)
 
 		for t in range(x.size(0)):
 
@@ -169,6 +169,9 @@ class RVAE(nn.Module):
 			all_encoder_sigma.append(encoder_sigma)
 			all_decoder_mu.append(decoder_mu)
 			all_decoder_sigma.append(decoder_sigma)
+
+			import pdb
+			pdb.set_trace()
 
 		return kld_loss, nll_loss, (all_encoder_mu, all_encoder_sigma), (all_decoder_mu, all_decoder_sigma)
 
