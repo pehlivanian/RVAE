@@ -9,7 +9,10 @@ from theano.tensor.shared_randomstreams import RandomStreams
 import pickle
 from collections import OrderedDict
 
-from theano_utils import gd_solver, rmsprop_solver, negative_feedback, gd_optimizer
+from theano_utils import (gd_solver, rmsprop_solver, negative_feedback, gd_optimizer,
+                          rmsprop_optimizer, adam_optimizer, load_data)
+
+import RNN
 import dA
 import hiddenlayer
 
@@ -70,6 +73,7 @@ class RVAE:
                  solver='rmsprop',
                  solverKwargs=dict(eta=1.e-4,beta=.7,epsilon=1.e-6),
                  L=1,
+                 n_rec_layers=2,
                  rng=None):
 
         self.params = list()
@@ -99,17 +103,20 @@ class RVAE:
 
         self.global_activation_fn = 'sigmoid'
 
+        self.n_features = n_features
         self.n_hidden_encoder = n_hidden_encoder
         self.n_hidden_decoder = n_hidden_decoder
         self.n_latent = n_latent
-        self.n_hidden_prior
-        self.n_rec_hidden
-        self.n_phi_x_hidden
-        self.n_phi_z_hidden
-        self.n_features = n_features
+        self.n_hidden_prior = n_hidden_prior
+        self.n_rec_hidden = n_rec_hidden
+        self.n_phi_x_hidden = n_phi_x_hidden
+        self.n_phi_z_hidden = n_phi_z_hidden
 
         # number of samples z^(i,l) per datapoint:
         self.L = L
+
+        # number of layers in recurrent cell
+        self.n_rec_layers = n_rec_layers
 
         self.batch_size = batch_size
 
@@ -126,13 +133,37 @@ class RVAE:
         # diagaonal covariance matrix - no covariance between
         # latent factors is assumed.
 
-        emcoder_input = T.stack([self.phi_x.output(), h[-1]], axis=0)
-        self.main_encoder = dA.SdA(
+        self.phi_x = dA.SdA(
             numpy_rng=self.np_rng,
             theano_rng=self.rng,
             input=self.x,
             symmetric=False,
-            n_visible=self.n_phi_x_hidden + self.n_rec_hidden,
+            n_visible=n_features,
+            dA_layers_sizes=self.n_phi_x_hidden,
+            tie_weights=False,
+            tie_biases=False,
+            encoder_activation_fn='relu',
+            decoder_activation_fn='identity',
+            global_decoder_activation_fn='identity',
+            initialize_W_as_identity=False,
+            initialize_W_prime_as_W_transpose=False,
+            add_noise_to_W=False,
+            noise_limit=0.,
+            solver_type='rmsprop',
+            predict_modifier_type='negative_feedback',
+            solver_kwargs=dict(eta=1.e-4,beta=.7,epsilon=1.e-6)            
+            )        
+
+        h_shape = (input.get_value().shape[0], input.get_value().shape[1], self.n_rec_hidden[-1])
+        h = theano.shared(name='h', value=np.zeros(h_shape))
+        encoder_input = T.concatenate([self.phi_x.output(), h])
+        
+        self.main_encoder = dA.SdA(
+            numpy_rng=self.np_rng,
+            theano_rng=self.rng,
+            input=encoder_input,
+            symmetric=False,
+            n_visible=self.n_phi_x_hidden[-1] + self.n_rec_hidden[-1],
             dA_layers_sizes=self.n_hidden_encoder,
             tie_weights=False,
             tie_biases=False,
@@ -148,34 +179,13 @@ class RVAE:
             solver_kwargs=dict(eta=1.e-4,beta=.7,epsilon=1.e-6)
             )
 
-        self.phi_x = dA.SdA(
-            numpy_rng=self.np_rng,
-            theano_rng=self.rng,
-            input=self.x,
-            symmetric=False,
-            n_visible=n_features,
-            dA_layers_sizes=[self.n_phi_x_hidden],
-            tie_weights=False,
-            tie_biases=False,
-            encoder_activation_fn='relu',
-            decoder_activation_fn='identity',
-            global_decoder_activation_fn='identity',
-            initialize_W_as_identity=False,
-            initialize_W_prime_as_W_transpose=False,
-            add_noise_to_W=False,
-            noise_limit=0.,
-            solver_type='rmsprop',
-            predict_modifier_type='negative_feedback',
-            solver_kwargs=dict(eta=1.e-4,beta=.7,epsilon=1.e-6)            
-            )
-
         self.phi_z = dA.SdA(
             numpy_rng=self.np_rng,
             theano_rng=self.rng,
             input=self.z,
             symmetric=False,
-            n_visible=n_latent,
-            dA_layers_sizes=[self.n_phi_z_hidden],
+            n_visible=n_latent[-1],
+            dA_layers_sizes=self.n_phi_z_hidden,
             tie_weights=False,
             tie_biases=False,
             encoder_activation_fn='relu',
@@ -196,7 +206,7 @@ class RVAE:
             input=self.main_encoder.output(),
             symmetric=False,
             n_visible=self.n_hidden_encoder[-1],
-            dA_layers_sizes=[self.n_latent],
+            dA_layers_sizes=self.n_latent,
             tie_weights=False,
             tie_biases=False,
             encoder_activation_fn='identity',
@@ -217,7 +227,7 @@ class RVAE:
             input=self.main_encoder.output(),
             symmetric=False,
             n_visible=self.n_hidden_encoder[-1],
-            dA_layers_sizes=[self.n_latent],
+            dA_layers_sizes=self.n_latent,
             tie_weights=False,
             tie_biases=False,
             encoder_activation_fn='identity',
@@ -252,9 +262,9 @@ class RVAE:
 
         self.prior = hiddenlayer.HiddenLayer(rng=self.np_rng,
                                              input=h[-1],
-                                             n_in=self.n_rec_hidden,
+                                             n_in=self.n_rec_hidden[-1],
                                              n_out=self.n_hidden_prior,
-                                             activation='relu'
+                                             activation=relu
                                              )
         self.prior_mu = dA.SdA(
             numpy_rng=self.np_rng,
@@ -262,7 +272,7 @@ class RVAE:
             input=self.prior.output(),
             symmetric=False,
             n_visible=self.n_hidden_prior,
-            dA_layers_sizes=[self.n_latent],
+            dA_layers_sizes=self.n_latent,
             tie_weights=False,
             tie_biases=False,
             encoder_activation_fn='identity',
@@ -283,7 +293,7 @@ class RVAE:
             input=self.prior.output(),
             symmetric=False,
             n_visible=self.n_hidden_prior,
-            dA_layers_sizes=[self.n_latent],
+            dA_layers_sizes=self.n_latent,
             tie_weights=False,
             tie_biases=False,
             encoder_activation_fn='identity',
@@ -310,13 +320,18 @@ class RVAE:
         ########################
         # START CREATE DECODER #
         ########################
-        decoder_input = T.stack([self.phi_z.output(), h[-1]], axis=0)
+
+        # XXX
+        import pdb
+        pdb.set_trace()
+        
+        decoder_input = T.concatenate([self.phi_z.output(), h], axis=0)
         self.main_decoder = dA.SdA(
             numpy_rng=self.np_rng,
             theano_rng=theano_rng,
             input=decoder_input,
             symmetric=False,
-            n_visible=self.n_phi_z_hidden + self.n_rec_hidden,
+            n_visible=self.n_phi_z_hidden[-1] + self.n_rec_hidden[-1],
             dA_layers_sizes=self.n_hidden_decoder,
             tie_weights=False,
             tie_biases=False,
@@ -387,13 +402,17 @@ class RVAE:
         #########################
         # CREATE RECURRENT UNIT #
         #########################
-        recurrent_input = T.stack([self.phi_x.output(), self.phi_z.output()], axis=0)
-        self.recurrent_layer = RNN.GRU_for_RVAE(rng=self.np_rng,
+
+        recurrent_input = T.concatenate([self.phi_x.output()[-1], self.phi_z.output()], axis=0)
+        self.recurrent_layer = RNN.GRU_for_RVAE(self.np_rng,
                                                 recurrent_input,
-                                                self.n_phi_x_hidden + self.phi_z_hidden,
-                                                self.n_rec_hidden,
-                                                2)
-        
+                                                recurrent_input,
+                                                self.n_phi_x_hidden[-1] + self.n_phi_z_hidden[-1],
+                                                self.n_rec_hidden[-1],
+                                                self.n_rec_layers,
+                                                theano_rng=None,
+                                                bptt_truncate=-1)
+
         self.params = self.params + self.recurrent_layer.params        
         #############################
         # END CREATE RECURRENT UNIT #

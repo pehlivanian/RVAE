@@ -140,6 +140,10 @@ class RVAE(nn.Module):
 
 			phi_x = self.phi_x(x[t])
 
+			# XXX
+			import pdb
+			pdb.set_trace()
+
 			encoder_input = torch.cat([phi_x, h[-1]], 1)
 			encoder_output = self.main_encoder(encoder_input)
 			encoder_mu = self.main_encoder_mu(encoder_output)
