@@ -154,9 +154,9 @@ class RVAE:
             solver_kwargs=dict(eta=1.e-4,beta=.7,epsilon=1.e-6)            
             )        
 
-        h_shape = (input.get_value().shape[0], input.get_value().shape[1], self.n_rec_hidden[-1])
+        h_shape = (self.n_rec_layers, input.get_value().shape[0], self.n_rec_hidden[-1])
         h = theano.shared(name='h', value=np.zeros(h_shape))
-        encoder_input = T.concatenate([self.phi_x.output(), h])
+        encoder_input = T.concatenate([self.phi_x.output(), h[-1]], axis=1)
         
         self.main_encoder = dA.SdA(
             numpy_rng=self.np_rng,
@@ -321,11 +321,7 @@ class RVAE:
         # START CREATE DECODER #
         ########################
 
-        # XXX
-        import pdb
-        pdb.set_trace()
-        
-        decoder_input = T.concatenate([self.phi_z.output(), h], axis=0)
+        decoder_input = T.concatenate([self.phi_z.output(), h[-1]], axis=1)
         self.main_decoder = dA.SdA(
             numpy_rng=self.np_rng,
             theano_rng=theano_rng,
@@ -403,13 +399,14 @@ class RVAE:
         # CREATE RECURRENT UNIT #
         #########################
 
-        recurrent_input = T.concatenate([self.phi_x.output()[-1], self.phi_z.output()], axis=0)
+        recurrent_input = T.concatenate([self.phi_x.output(), self.phi_z.output()], axis=1)
         self.recurrent_layer = RNN.GRU_for_RVAE(self.np_rng,
                                                 recurrent_input,
                                                 recurrent_input,
                                                 self.n_phi_x_hidden[-1] + self.n_phi_z_hidden[-1],
                                                 self.n_rec_hidden[-1],
                                                 self.n_rec_layers,
+                                                batch_size=self.batch_size,
                                                 theano_rng=None,
                                                 bptt_truncate=-1)
 
@@ -442,7 +439,7 @@ class RVAE:
         srng = T.shared_randomstreams.RandomStreams(seed=seed)
         # XXX
         # dev = self.rng.normal((self.L, mu.shape[0], self.n_latent))
-        dev = srng.normal((self.L, mu.shape[0], self.n_latent))        
+        dev = srng.normal((mu.shape[0], self.n_latent[-1]))        
         z = mu + T.exp(0.5 * logSigma) * dev
         return z
 

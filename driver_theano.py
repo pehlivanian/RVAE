@@ -17,7 +17,7 @@ import RVAE_theano
 # MNIST dataset
 all_data = load_data('mnist.pkl.gz')
 train_set_x = all_data[0][0] # row major
-train_set_x0 = train_set_x.get_value()
+train_set_x0 = train_set_x.get_value()[:1000, :]
 train_set_x0 = np.swapaxes(train_set_x0.reshape(-1, 28, 28), 0, 1)
 train_set_x = theano.shared(name='train_set_x', value=train_set_x0)
 (m, N, n) = train_set_x0.shape
@@ -90,7 +90,13 @@ index = T.iscalar('index')
 num_batches = N
 batch_size = int(N / num_batches)
 
+
+
 import RVAE_theano
+
+train_set_x0 = train_set_x.get_value()[14,:,:]
+train_set_x = theano.shared(name='train_set_x', value=train_set_x0)
+
 model = RVAE_theano.RVAE(n_features,
                          n_hidden_encoder,
                          n_hidden_decoder,
