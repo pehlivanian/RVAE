@@ -154,6 +154,10 @@ class RVAE:
             solver_kwargs=dict(eta=1.e-4,beta=.7,epsilon=1.e-6)            
             )        
 
+        # XXX
+        import pdb
+        pdb.set_trace()
+        
         h_shape = (self.n_rec_layers, input.get_value().shape[0], self.n_rec_hidden[-1])
         h = theano.shared(name='h', value=np.zeros(h_shape))
         encoder_input = T.concatenate([self.phi_x.output(), h[-1]], axis=1)
@@ -401,8 +405,8 @@ class RVAE:
 
         recurrent_input = T.concatenate([self.phi_x.output(), self.phi_z.output()], axis=1)
         self.recurrent_layer = RNN.GRU_for_RVAE(self.np_rng,
-                                                recurrent_input,
-                                                recurrent_input,
+                                                recurrent_input.T,
+                                                recurrent_input.T,
                                                 self.n_phi_x_hidden[-1] + self.n_phi_z_hidden[-1],
                                                 self.n_rec_hidden[-1],
                                                 self.n_rec_layers,
@@ -447,6 +451,42 @@ class RVAE:
         return 0.5 * T.sum(1 + logSigma - mu**2 - T.exp(logSigma), axis=1)
 
     def objective(self):
+
+        def iter_step(h):
+            phi_x = self.phi_x.output()
+
+            encoder_input = T.concatenate([phi_x, h[-1]], axis=1)        
+            encoder_output = self.main_encoder.output_from_input(encoder_input)
+
+            mu = self.mu_encoder.output_from_input(encoder_output)
+            logSigma = self.log_sigma_encoder.output_from_input(encoder_output)
+
+            prior = self.prior.output_from_input(h[-1])
+            prior_mu = self.prior_mu.output_from_input(prior)
+            prior_logSigma = self.prior_log_sigma.output_from_input(prior)
+
+            z = self.sample(mu, logSigma)
+
+            phi_z = self.phi_z.output_from_input(z)
+
+            decoder_input = T.concatenate([phi_z, h[-1]], axis=1)
+            decoder_output = self.main_decoder.output_from_input(decoder_input)
+            decoder_mu = self.main_decoder_mu.output_from_input(decoder_output)
+            decoder_logSigma = self.main_decoder_log_sigma.output_from_input(decoder_output)
+
+            recurrent_input = T.shape_padaxis(T.swapaxes(T.concatenate([phi_x, phi_z], axis=1), 0, 1), 2)
+
+            
+            index = T.iscalar('index')
+            train_step = theano.function([index],
+                                         self.recurrent_layer.output(),
+                                         givens=[(model.x, recurrent_input.astype(theano.config.floatX)),
+                                                 ]
+                                         )
+            
+            h = self.recurrent_layer.output_from_input(recurrent_input)
+        
+    def objective(self):
         # Input for main_encoder is 'self.x'
         encoder_output = self.main_encoder.output()
 
@@ -455,7 +495,7 @@ class RVAE:
         logSigma = self.log_sigma_encoder.output()
 
         # Sample from normal; reparameterization trick
-        z = self.sample(mu, logSigma).dimshuffle(1,2)
+        z = self.sample(mu, logSigma)
 
         # K-L divergence
         KLD = self.KLDivergence(mu, logSigma)
