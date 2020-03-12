@@ -11,6 +11,7 @@ from theano_utils import (gd_solver, rmsprop_solver, negative_feedback,
 
 import RVAE_theano
 
+
 ########
 # Data #
 ########
@@ -86,15 +87,13 @@ adam_solver_kwargs = dict(learning_rate=0.001,beta1=0.95,beta2=0.999,epsilon=1e-
 #########
 x = T.matrix('x')
 index = T.iscalar('index')
-num_batches = N
-batch_size = int(N / num_batches)
+batch_size = 133
 
 
 
-import RVAE_theano
-
-# train_set_x0 = train_set_x.get_value()[14,:,:]
-# train_set_x = theano.shared(name='train_set_x', value=train_set_x0)
+# This represents one minibatch, take care of it later with (index, givens) logic
+train_set_x0 = train_set_x.get_value()[:,0:batch_size, :]
+train_set_x = theano.shared(name='train_set_x', value=train_set_x0)
 
 model = RVAE_theano.RVAE(n_features,
                          n_hidden_encoder,
@@ -112,38 +111,9 @@ model = RVAE_theano.RVAE(n_features,
                          n_rec_layers=n_rec_layers,
                          rng=None)
 
-
-
 self = model
-h_shape = (self.n_rec_layers, model.x.get_value().shape[0], self.n_rec_hidden[-1])
+h_shape = (self.n_rec_layers, train_set_x0.shape[1], self.n_rec_hidden[-1])
 h = theano.shared(name='h', value=np.zeros(h_shape))
 
-phi_x = self.phi_x.output()
 
-encoder_input = T.concatenate([phi_x, h[-1]], axis=1)        
-encoder_output = self.main_encoder.output_from_input(encoder_input)
 
-mu = self.mu_encoder.output_from_input(encoder_output)
-logSigma = self.log_sigma_encoder.output_from_input(encoder_output)
-
-prior = self.prior.output_from_input(h[-1])
-prior_mu = self.prior_mu.output_from_input(prior)
-prior_logSigma = self.prior_log_sigma.output_from_input(prior)
-
-z = self.sample(mu, logSigma)
-
-phi_z = self.phi_z.output_from_input(z)
-
-decoder_input = T.concatenate([phi_z, h[-1]], axis=1)
-decoder_output = self.main_decoder.output_from_input(decoder_input)
-decoder_mu = self.main_decoder_mu.output_from_input(decoder_output)
-decoder_logSigma = self.main_decoder_log_sigma.output_from_input(decoder_output)
-
-recurrent_input = T.concatenate([phi_x, phi_z], axis=1)
-recurrent_input0 = theano.function([], recurrent_input)()
-
-train_step = theano.function([],
-                             self.recurrent_layer.hidden_output(),
-                             givens=[(self.recurrent_layer.x, recurrent_input0.astype(theano.config.floatX)),
-                                     ]
-                             )

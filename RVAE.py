@@ -158,9 +158,6 @@ class RVAE(nn.Module):
 			decoder_sigma = self.main_decoder_sigma(decoder_output)
 
 			# recurrent cell
-			# XXX
-			import pdb
-			pdb.set_trace()			
 			_, h = self.recurrent_cell(torch.cat([phi_x, phi_z], 1).unsqueeze(0), h)
 
 			kld_loss += self._kld_gauss(encoder_mu, encoder_sigma, prior_mu, prior_sigma)
@@ -172,9 +169,6 @@ class RVAE(nn.Module):
 			all_encoder_sigma.append(encoder_sigma)
 			all_decoder_mu.append(decoder_mu)
 			all_decoder_sigma.append(decoder_sigma)
-
-			import pdb
-			pdb.set_trace()
 
 		return kld_loss, nll_loss, (all_encoder_mu, all_encoder_sigma), (all_decoder_mu, all_decoder_sigma)
 

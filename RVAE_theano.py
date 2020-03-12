@@ -89,7 +89,15 @@ class RVAE:
         if input is None:
             self.x = T.dmatrix(name='input')
         else:
-            self.x = input
+            # We wire the layers so that the dimensions are set up for an
+            # iteration over input as in
+            #
+            # for input_step in input:
+            #     train(input_step)
+            #
+            # where input_step represents, in the MNIST case,1 row of the digit
+            # batch_size times
+            self.x = input[0]
 
         # Unsupervised, "bombe" encoding
         # http://en.wikipedia.org/wiki/Bombe#Structure
@@ -154,11 +162,7 @@ class RVAE:
             solver_kwargs=dict(eta=1.e-4,beta=.7,epsilon=1.e-6)            
             )        
 
-        # XXX
-        import pdb
-        pdb.set_trace()
-        
-        h_shape = (self.n_rec_layers, input.get_value().shape[0], self.n_rec_hidden[-1])
+        h_shape = (self.n_rec_layers, input.get_value().shape[1], self.n_rec_hidden[-1])
         h = theano.shared(name='h', value=np.zeros(h_shape))
         encoder_input = T.concatenate([self.phi_x.output(), h[-1]], axis=1)
         
@@ -426,8 +430,8 @@ class RVAE:
         # We will use sigmoid however as cost involves binary_crossentropy
         global_activation_fn = _get_activation('sigmoid')
         self.global_decoder = hiddenlayer.HiddenLayer(rng=self.np_rng,
-                                                      input=self.main_decoder.output(),
-                                                      n_in=self.n_hidden_decoder[-1],
+                                                      input=self.main_decoder_mu.output(),
+                                                      n_in=self.n_features,
                                                       n_out=self.n_features,
                                                       activation=global_activation_fn,
                                                       )
@@ -447,10 +451,11 @@ class RVAE:
         z = mu + T.exp(0.5 * logSigma) * dev
         return z
 
-    def KLDivergence(self, mu, logSigma):
-        return 0.5 * T.sum(1 + logSigma - mu**2 - T.exp(logSigma), axis=1)
-
-    def objective(self):
+    def KLDivergence(self, mu, logSigma, prior_mu, prior_logSigma):
+        kld_element = (prior_logSigma - logSigma + (T.exp(logSigma) + (mu - prior_mu)**2) / T.exp(prior_logSigma) - 1)
+        return 0.5 * T.sum(kld_element)
+                       
+    def objective(self, input):
 
         def iter_step(h):
             phi_x = self.phi_x.output()
@@ -474,45 +479,19 @@ class RVAE:
             decoder_mu = self.main_decoder_mu.output_from_input(decoder_output)
             decoder_logSigma = self.main_decoder_log_sigma.output_from_input(decoder_output)
 
-            recurrent_input = T.shape_padaxis(T.swapaxes(T.concatenate([phi_x, phi_z], axis=1), 0, 1), 2)
+            recurrent_input = T.shape_padaxis(T.concatenate([phi_x, phi_z], axis=1), axis=2)            
+            h_t = self.recurrent_layer.hidden_output_from_input(recurrent_input)
 
-            
-            index = T.iscalar('index')
-            train_step = theano.function([index],
-                                         self.recurrent_layer.output(),
-                                         givens=[(model.x, recurrent_input.astype(theano.config.floatX)),
-                                                 ]
-                                         )
-            
-            h = self.recurrent_layer.output_from_input(recurrent_input)
+            # KL Divergence
+            KLD = self.KLDivergence(mu, logSigma, prior_mu, prior_logSigma)
+
+            # log(p(x|z))
+            x_tilde = self.global_decoder.output_from_input(decoder_mu)
+            log_p_x_z = T.sum( self.x * T.log(x_tilde) + (1 - self.x)*T.log(1 - x_tilde), axis=1)
+
+            obj = T.mean(log_p_x_z + KLD)
         
-    def objective(self):
-        # Input for main_encoder is 'self.x'
-        encoder_output = self.main_encoder.output()
-
-        # Calculate mu, logSigma from encoder output
-        mu = self.mu_encoder.output()
-        logSigma = self.log_sigma_encoder.output()
-
-        # Sample from normal; reparameterization trick
-        z = self.sample(mu, logSigma)
-
-        # K-L divergence
-        KLD = self.KLDivergence(mu, logSigma)
-
-        # Decode
-        hidden_decoded = self.main_decoder.output_from_input(z)
-
-        # Call global decoder, reconstruct x for unsupervised problem
-        x_tilde = self.global_decoder.output_from_input(hidden_decoded)
-
-        # Calculate log(p(x|z))
-        log_p_x_z = T.sum( self.x*T.log(x_tilde) + (1 - self.x)*T.log(1 - x_tilde), axis=1)
-
-        # Variational objective
-        lhs = T.mean(log_p_x_z + KLD)
-
-        return lhs
+            return obj
 
     def predict(self):
         ''' Outputs

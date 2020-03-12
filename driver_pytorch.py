@@ -98,7 +98,7 @@ def main(mnist=True, normalize=False, save_model=False):
 	if mnist:
 		# Params
 		num_features        = 28
-		batch_size          = 125
+		batch_size          = 133
 		n_phi_x_hidden      = 150
 		n_phi_z_hidden      = 150
 		n_latent            = 28
