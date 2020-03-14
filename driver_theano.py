@@ -111,9 +111,14 @@ model = RVAE_theano.RVAE(n_features,
                          n_rec_layers=n_rec_layers,
                          rng=None)
 
+
+# To optimize
 self = model
-h_shape = (self.n_rec_layers, train_set_x0.shape[1], self.n_rec_hidden[-1])
-h = theano.shared(name='h', value=np.zeros(h_shape))
-
-
+grads = T.grad( T.sum(self.objective_from_input(train_set_x)), self.params)
+                
+index = T.scalar('index')
+cost_updates = theano.function(input=[index],
+                               outputs=model.objective(),
+                               givens={model.x, train_set_x[index]},
+                               )
 

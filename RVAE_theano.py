@@ -74,6 +74,7 @@ class RVAE:
                  solverKwargs=dict(eta=1.e-4,beta=.7,epsilon=1.e-6),
                  L=1,
                  n_rec_layers=2,
+                 bptt_truncate=-1,
                  rng=None):
 
         self.params = list()
@@ -86,6 +87,8 @@ class RVAE:
         self.np_rng = rng
         self.rng = theano_rng
 
+        self.bptt_truncate = bptt_truncate
+
         if input is None:
             self.x = T.dmatrix(name='input')
         else:
@@ -97,12 +100,9 @@ class RVAE:
             #
             # where input_step represents, in the MNIST case,1 row of the digit
             # batch_size times
+            # This will get overrided in a givens method
             self.x = input[0]
 
-        # Unsupervised, "bombe" encoding
-        # http://en.wikipedia.org/wiki/Bombe#Structure
-        self.y = self.x
-        
         z = T.matrix('z')
         self.z = z
 
@@ -162,9 +162,9 @@ class RVAE:
             solver_kwargs=dict(eta=1.e-4,beta=.7,epsilon=1.e-6)            
             )        
 
-        h_shape = (self.n_rec_layers, input.get_value().shape[1], self.n_rec_hidden[-1])
-        h = theano.shared(name='h', value=np.zeros(h_shape))
-        encoder_input = T.concatenate([self.phi_x.output(), h[-1]], axis=1)
+        self.h_shape = (self.n_rec_layers, input.get_value().shape[1], self.n_rec_hidden[-1])
+        self.h = theano.shared(name='h', value=np.zeros(self.h_shape))
+        encoder_input = T.concatenate([self.phi_x.output(), self.h[-1]], axis=1)
         
         self.main_encoder = dA.SdA(
             numpy_rng=self.np_rng,
@@ -269,10 +269,10 @@ class RVAE:
         ################
 
         self.prior = hiddenlayer.HiddenLayer(rng=self.np_rng,
-                                             input=h[-1],
+                                             input=self.h[-1],
                                              n_in=self.n_rec_hidden[-1],
                                              n_out=self.n_hidden_prior,
-                                             activation=relu
+                                             activation=T.tanh,
                                              )
         self.prior_mu = dA.SdA(
             numpy_rng=self.np_rng,
@@ -329,7 +329,7 @@ class RVAE:
         # START CREATE DECODER #
         ########################
 
-        decoder_input = T.concatenate([self.phi_z.output(), h[-1]], axis=1)
+        decoder_input = T.concatenate([self.phi_z.output(), self.h[-1]], axis=1)
         self.main_decoder = dA.SdA(
             numpy_rng=self.np_rng,
             theano_rng=theano_rng,
@@ -397,8 +397,9 @@ class RVAE:
             self.params = self.params + [layer.W, layer.b]
         for layer in self.main_decoder_mu.mlp_layers:
             self.params = self.params + [layer.W, layer.b]
-        for layer in self.main_decoder_log_sigma.mlp_layers:
-            self.params = self.params + [layer.W, layer.b]
+        # Not used in output calibraion, output generation
+        # for layer in self.main_decoder_log_sigma.mlp_layers:
+        #     self.params = self.params + [layer.W, layer.b]
         ######################
         # END CREATE DECODER #
         ######################
@@ -418,7 +419,7 @@ class RVAE:
                                                 theano_rng=None,
                                                 bptt_truncate=-1)
 
-        self.params = self.params + self.recurrent_layer.params        
+        self.params = self.params + self.recurrent_layer.hidden_params        
         #############################
         # END CREATE RECURRENT UNIT #
         #############################
@@ -442,23 +443,20 @@ class RVAE:
         ##########################################
 
     def sample(self, mu, logSigma):
-        # XXX
-        seed = 55
-        srng = T.shared_randomstreams.RandomStreams(seed=seed)
-        # XXX
-        # dev = self.rng.normal((self.L, mu.shape[0], self.n_latent))
-        dev = srng.normal((mu.shape[0], self.n_latent[-1]))        
+        global SEED
+        srng = T.shared_randomstreams.RandomStreams(seed=SEED)
+        dev = srng.normal((self.batch_size, self.n_latent[-1]))        
         z = mu + T.exp(0.5 * logSigma) * dev
         return z
 
     def KLDivergence(self, mu, logSigma, prior_mu, prior_logSigma):
         kld_element = (prior_logSigma - logSigma + (T.exp(logSigma) + (mu - prior_mu)**2) / T.exp(prior_logSigma) - 1)
-        return 0.5 * T.sum(kld_element)
-                       
-    def objective(self, input):
+        return 0.5 * T.sum(kld_element, axis=0)
 
-        def iter_step(h):
-            phi_x = self.phi_x.output()
+    def get_hidden_cost_output_from_input(self, x_in):
+
+        def iter_step(x_step, h):
+            phi_x = self.phi_x.output_from_input(x_step)
 
             encoder_input = T.concatenate([phi_x, h[-1]], axis=1)        
             encoder_output = self.main_encoder.output_from_input(encoder_input)
@@ -471,50 +469,107 @@ class RVAE:
             prior_logSigma = self.prior_log_sigma.output_from_input(prior)
 
             z = self.sample(mu, logSigma)
-
+                                    
             phi_z = self.phi_z.output_from_input(z)
 
             decoder_input = T.concatenate([phi_z, h[-1]], axis=1)
             decoder_output = self.main_decoder.output_from_input(decoder_input)
             decoder_mu = self.main_decoder_mu.output_from_input(decoder_output)
-            decoder_logSigma = self.main_decoder_log_sigma.output_from_input(decoder_output)
+            # Not used
+            # decoder_logSigma = self.main_decoder_log_sigma.output_from_input(decoder_output)
 
             recurrent_input = T.shape_padaxis(T.concatenate([phi_x, phi_z], axis=1), axis=2)            
-            h_t = self.recurrent_layer.hidden_output_from_input(recurrent_input)
+            h_t = T.swapaxes(self.recurrent_layer.hidden_output_from_input(recurrent_input), 1, 2)
 
             # KL Divergence
             KLD = self.KLDivergence(mu, logSigma, prior_mu, prior_logSigma)
 
             # log(p(x|z))
+            # XXX
+            # Looks like self.x needs to be set by a givens here!
             x_tilde = self.global_decoder.output_from_input(decoder_mu)
-            log_p_x_z = T.sum( self.x * T.log(x_tilde) + (1 - self.x)*T.log(1 - x_tilde), axis=1)
+            log_p_x_z = T.sum( self.x * T.log(x_tilde) + (1 - self.x)*T.log(1 - x_tilde), axis=0)
 
             obj = T.mean(log_p_x_z + KLD)
         
-            return obj
+            return h_t, obj, decoder_mu
 
-    def predict(self):
-        ''' Outputs
-        '''
-        encoder_output = self.main_encoder.output()
-        mu = self.mu_encoder.output()
-        logSigma = self.log_sigma_encoder.output()
-        z = self.sample(mu, logSigma).dimshuffle(1,2)
-        hidden_decoded = self.main_decoder.output_from_input(z)
-        x_hat = self.global_decoder.output_from_input(hidden_decoded)
-        return x_hat
+        [h_n, obj, x],inner_updates = theano.scan(
+            fn=iter_step,
+            sequences=[x_in],
+            truncate_gradient=self.bptt_truncate,
+            outputs_info=[T.as_tensor_variable(np.ones(self.h_shape), self.h.dtype),
+                          None,
+                          None],
+            )
+
+        h_out = T.swapaxes(h_n, 0, 1)[-1]
+        obj_out = T.sum(obj)
+        x_out = x
+
+        return h_out, obj_out, x_out
+
+    def get_hidden_cost_output(self):
+        return self.get_hidden_cost_output_from_input(self.x)
+    
+    def output_from_input(self, input):
+        _, _, x = self.get_hidden_cost_output_from_input(input)
+        return x
+
+    def output(self):
+        return self.output_from_input(self.x)
 
     def predict_from_input(self, input):
-        ''' Outputs from specified input
+        _, _, x = self.get_hidden_cost_output_from_input(input)
+        return x
+
+    def predict(self):
+        return self.predict_form_input(self.x)
+
+    def objective_from_input(self, input):
+        _, obj, _ = self.get_hidden_cost_output_from_input(input)
+        return obj
+
+    def objective(self):
+        return self.objective_from_input(self.x)
+
+    def compute_cost_updates_from_input(self, input):
+        ''' simple rmsprop
         '''
-        encoder_output = self.main_encoder.output()
-        mu = self.mu_encoder.output()
-        logSigma = self.log_sigma_encoder.output()
-        z = self.sample(mu, logSigma).dimshuffle(1,2)
-        hidden_decoded = self.main_decoder.output_from_input(z)
-        x_hat = self.global_decoder.output_from_input(hidden_decoded)
-        fn = theano.function([], x_hat, givens={self.x: input } )
-        return x_hat
+        _, cost, _ = self.get_hidden_cost_output_from_input(input)
+
+        grads = T.grad(cost, self.params)
+
+        one = T.constant(1.0)
+
+        def _updates(param, cache, df, beta=0.9, eta=1.e-2, epsilon=1.e-6):
+            cache_val = beta * cache + (one-beta) * df**2
+            x = T.switch(T.abs_(cache_val) < epsilon,
+                         cache_val,
+                         eta * df / (T.sqrt(cache_val) + epsilon))
+            updates = (param, param-x), (cache, cache_val)
+
+            return updates
+
+        caches = [theano.shared(name='c%s' % param,
+                                value=param.get_value() * 0,
+                                broadcastable=param.broadcastable)
+                  for param in self.params]
+
+        update = []
+
+        for param, cache, grad in zip(self.params, caches, grads):
+            param_updates, cache_updates = _updates(param,
+                                                    cache,
+                                                    grad,
+                                                    beta=beta,
+                                                    eta=eta,
+                                                    epsilon=epsilon)
+
+            updates.append(param_updates)
+            updates.append(cache_updates)
+
+        return (cost, updates)
 
     def reconstruct_all(self, train_set_x):
         encoder_output = self.main_encoder.output()
