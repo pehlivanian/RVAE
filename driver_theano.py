@@ -87,13 +87,11 @@ adam_solver_kwargs = dict(learning_rate=0.001,beta1=0.95,beta2=0.999,epsilon=1e-
 #########
 x = T.matrix('x')
 index = T.iscalar('index')
-batch_size = 133
-
-
+batch_size = 50
 
 # This represents one minibatch, take care of it later with (index, givens) logic
-train_set_x0 = train_set_x.get_value()[:,0:batch_size, :]
-train_set_x = theano.shared(name='train_set_x', value=train_set_x0)
+train_set_x_batch0 = train_set_x.get_value()[:,0:batch_size, :]
+train_set_x_batch = theano.shared(name='train_set_x', value=train_set_x_batch0)
 
 model = RVAE_theano.RVAE(n_features,
                          n_hidden_encoder,
@@ -103,7 +101,7 @@ model = RVAE_theano.RVAE(n_features,
                          n_rec_hidden,
                          n_phi_x_hidden,
                          n_phi_z_hidden,
-                         train_set_x,
+                         train_set_x_batch,
                          batch_size=batch_size,
                          solver='rmsprop',
                          solverKwargs=dict(eta=1.e-4, beta=.7, epsilon=1.e-6),
@@ -112,13 +110,14 @@ model = RVAE_theano.RVAE(n_features,
                          rng=None)
 
 
-# To optimize
-self = model
-grads = T.grad( T.sum(self.objective_from_input(train_set_x)), self.params)
-                
-index = T.scalar('index')
-cost_updates = theano.function(input=[index],
-                               outputs=model.objective(),
-                               givens={model.x, train_set_x[index]},
-                               )
 
+index = T.lscalar('index')
+model.x = train_set_x[:, 0:batch_size, :]
+cost, updates = model.compute_cost_updates()
+cost0 = theano.function([], cost)()
+train_rvae = theano.function(
+    [index],
+    cost,
+    updates=updates,
+    givens=[(model.x, train_set_x[:, index*batch_size:(index+1)*batch_size, :])],
+    )

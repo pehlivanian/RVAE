@@ -445,6 +445,14 @@ class RVAE:
     def sample(self, mu, logSigma):
         global SEED
         srng = T.shared_randomstreams.RandomStreams(seed=SEED)
+        # dev = 0.0025 * T.ones((self.batch_size, self.n_latent[-1]))
+        dev = srng.normal((self.batch_size, self.n_latent[-1]))
+        z = mu + T.exp(0.5 * logSigma) * dev
+        return z
+
+    def sample_old(self, mu, logSigma):
+        global SEED
+        srng = T.shared_randomstreams.RandomStreams(seed=SEED)
         dev = srng.normal((self.batch_size, self.n_latent[-1]))        
         z = mu + T.exp(0.5 * logSigma) * dev
         return z
@@ -485,10 +493,8 @@ class RVAE:
             KLD = self.KLDivergence(mu, logSigma, prior_mu, prior_logSigma)
 
             # log(p(x|z))
-            # XXX
-            # Looks like self.x needs to be set by a givens here!
             x_tilde = self.global_decoder.output_from_input(decoder_mu)
-            log_p_x_z = T.sum( self.x * T.log(x_tilde) + (1 - self.x)*T.log(1 - x_tilde), axis=0)
+            log_p_x_z = T.sum( x_step * T.log(x_tilde) + (1 - x_step)*T.log(1 - x_tilde), axis=0)
 
             obj = T.mean(log_p_x_z + KLD)
         
@@ -498,7 +504,7 @@ class RVAE:
             fn=iter_step,
             sequences=[x_in],
             truncate_gradient=self.bptt_truncate,
-            outputs_info=[T.as_tensor_variable(np.ones(self.h_shape), self.h.dtype),
+            outputs_info=[T.as_tensor_variable(np.zeros(self.h_shape), self.h.dtype),
                           None,
                           None],
             )
@@ -533,10 +539,10 @@ class RVAE:
     def objective(self):
         return self.objective_from_input(self.x)
 
-    def compute_cost_updates_from_input(self, input):
+    def compute_cost_updates(self):
         ''' simple rmsprop
         '''
-        _, cost, _ = self.get_hidden_cost_output_from_input(input)
+        _, cost, _ = self.get_hidden_cost_output()
 
         grads = T.grad(cost, self.params)
 
@@ -556,15 +562,15 @@ class RVAE:
                                 broadcastable=param.broadcastable)
                   for param in self.params]
 
-        update = []
+        updates = []
 
         for param, cache, grad in zip(self.params, caches, grads):
             param_updates, cache_updates = _updates(param,
                                                     cache,
                                                     grad,
-                                                    beta=beta,
-                                                    eta=eta,
-                                                    epsilon=epsilon)
+                                                    beta=self.solverKwargs['beta'],
+                                                    eta=self.solverKwargs['eta'],
+                                                    epsilon=self.solverKwargs['epsilon'])
 
             updates.append(param_updates)
             updates.append(cache_updates)
