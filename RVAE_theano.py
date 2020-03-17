@@ -453,7 +453,7 @@ class RVAE:
 
     def KLDivergence(self, mu, logSigma, prior_mu, prior_logSigma):
         kld_element = (prior_logSigma - logSigma + (T.exp(logSigma) + (mu - prior_mu)**2) / T.exp(prior_logSigma) - 1)
-        return 0.5 * T.sum(kld_element, axis=0)
+        return 0.5 * kld_element
 
     def get_hidden_cost_output_from_input(self, x_in):
 
@@ -488,7 +488,7 @@ class RVAE:
 
             # log(p(x|z))
             x_tilde = self.global_decoder.output_from_input(decoder_mu)
-            log_p_x_z = T.sum( x_step * T.log(x_tilde) + (1 - x_step)*T.log(1 - x_tilde), axis=0)
+            log_p_x_z = -1 * T.sum( x_step * T.log(x_tilde) + (1 - x_step)*T.log(1 - x_tilde), axis=0)
 
             obj = T.mean(log_p_x_z + KLD)
         
