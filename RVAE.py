@@ -136,6 +136,10 @@ class RVAE(nn.Module):
 		h = Variable(torch.zeros(self.n_rec_layers, x.size(1), self.n_rec_hidden))
 		# At this point x has shape (28, 128, 28) or (28, batch_size, 28)
 
+		# XXX
+		import pdb
+		pdb.set_trace()
+
 		for t in range(x.size(0)):
 
 			phi_x = self.phi_x(x[t])

@@ -87,7 +87,7 @@ adam_solver_kwargs = dict(learning_rate=0.001,beta1=0.95,beta2=0.999,epsilon=1e-
 #########
 x = T.matrix('x')
 index = T.iscalar('index')
-batch_size = 50
+batch_size = 100
 
 # This represents one minibatch, take care of it later with (index, givens) logic
 train_set_x_batch0 = train_set_x.get_value()[:,0:batch_size, :]
@@ -110,6 +110,12 @@ model = RVAE_theano.RVAE(n_features,
                          rng=None)
 
 
+# Test
+self = model
+h = self.h
+x_in = train_set_x_batch
+x_step = train_set_x_batch[0]
+dev = self.srng.normal((self.batch_size, self.n_latent[-1]))
 
 index = T.lscalar('index')
 model.x = train_set_x[:, 0:batch_size, :]

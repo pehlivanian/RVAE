@@ -85,6 +85,7 @@ class RVAE:
         else:
             theano_rng = RandomStreams(rng.randint(2 ** 30))
         self.np_rng = rng
+        self.srng = T.shared_randomstreams.RandomStreams(seed=SEED)        
         self.rng = theano_rng
 
         self.bptt_truncate = bptt_truncate
@@ -442,18 +443,11 @@ class RVAE:
         # END CREATE GLOBAL HIDDEN LAYER WEIGHTS #
         ##########################################
 
-    def sample(self, mu, logSigma):
+    def reconstruction_sample(self, mu, logSigma):
         global SEED
         srng = T.shared_randomstreams.RandomStreams(seed=SEED)
-        # dev = 0.0025 * T.ones((self.batch_size, self.n_latent[-1]))
-        dev = srng.normal((self.batch_size, self.n_latent[-1]))
-        z = mu + T.exp(0.5 * logSigma) * dev
-        return z
-
-    def sample_old(self, mu, logSigma):
-        global SEED
-        srng = T.shared_randomstreams.RandomStreams(seed=SEED)
-        dev = srng.normal((self.batch_size, self.n_latent[-1]))        
+        dev = 0.0025 * T.ones((self.batch_size, self.n_latent[-1]))
+        # dev = srng.normal((self.batch_size, self.n_latent[-1]))
         z = mu + T.exp(0.5 * logSigma) * dev
         return z
 
@@ -463,7 +457,7 @@ class RVAE:
 
     def get_hidden_cost_output_from_input(self, x_in):
 
-        def iter_step(x_step, h):
+        def iter_step(x_step, h, dev):
             phi_x = self.phi_x.output_from_input(x_step)
 
             encoder_input = T.concatenate([phi_x, h[-1]], axis=1)        
@@ -476,7 +470,7 @@ class RVAE:
             prior_mu = self.prior_mu.output_from_input(prior)
             prior_logSigma = self.prior_log_sigma.output_from_input(prior)
 
-            z = self.sample(mu, logSigma)
+            z = mu + T.exp(0.5 * logSigma) * dev
                                     
             phi_z = self.phi_z.output_from_input(z)
 
@@ -507,6 +501,7 @@ class RVAE:
             outputs_info=[T.as_tensor_variable(np.zeros(self.h_shape), self.h.dtype),
                           None,
                           None],
+            non_sequences=[T.as_tensor_variable(self.srng.normal((self.batch_size, self.n_latent[-1])), self.h.dtype)],
             )
 
         h_out = T.swapaxes(h_n, 0, 1)[-1]
