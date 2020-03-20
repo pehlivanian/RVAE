@@ -137,8 +137,8 @@ class RVAE(nn.Module):
 		# At this point x has shape (28, 128, 28) or (28, batch_size, 28)
 
 		# XXX
-		import pdb
-		pdb.set_trace()
+		# import pdb
+		# pdb.set_trace()
 
 		for t in range(x.size(0)):
 
@@ -178,6 +178,10 @@ class RVAE(nn.Module):
 
 	def sample(self, seq_len):
 
+		# XXX
+		# import pdb
+		# pdb.set_trace()
+		
 		sample = torch.zeros(seq_len, self.n_features)
 
 		h = Variable(torch.zeros(self.n_rec_layers, 1, self.n_encoder_hidden))

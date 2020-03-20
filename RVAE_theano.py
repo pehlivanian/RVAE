@@ -152,8 +152,8 @@ class RVAE:
             tie_weights=False,
             tie_biases=False,
             encoder_activation_fn='relu',
-            decoder_activation_fn='identity',
-            global_decoder_activation_fn='identity',
+            decoder_activation_fn='relu',
+            global_decoder_activation_fn='relu',
             initialize_W_as_identity=False,
             initialize_W_prime_as_W_transpose=False,
             add_noise_to_W=False,
@@ -198,8 +198,8 @@ class RVAE:
             tie_weights=False,
             tie_biases=False,
             encoder_activation_fn='relu',
-            decoder_activation_fn='identity',
-            global_decoder_activation_fn='identity',
+            decoder_activation_fn='relu',
+            global_decoder_activation_fn='relu',
             initialize_W_as_identity=False,
             initialize_W_prime_as_W_transpose=False,
             add_noise_to_W=False,
@@ -218,9 +218,9 @@ class RVAE:
             dA_layers_sizes=self.n_latent,
             tie_weights=False,
             tie_biases=False,
-            encoder_activation_fn='identity',
-            decoder_activation_fn='identity',
-            global_decoder_activation_fn='identity',
+            encoder_activation_fn='sigmoid',
+            decoder_activation_fn='sigmoid',
+            global_decoder_activation_fn='sigmoid',
             initialize_W_as_identity=False,
             initialize_W_prime_as_W_transpose=False,
             add_noise_to_W=False,
@@ -239,9 +239,9 @@ class RVAE:
             dA_layers_sizes=self.n_latent,
             tie_weights=False,
             tie_biases=False,
-            encoder_activation_fn='identity',
-            decoder_activation_fn='identity',
-            global_decoder_activation_fn='identity',
+            encoder_activation_fn='softplus',
+            decoder_activation_fn='softplus',
+            global_decoder_activation_fn='softplus',
             initialize_W_as_identity=False,
             initialize_W_prime_as_W_transpose=False,
             add_noise_to_W=False,
@@ -252,15 +252,15 @@ class RVAE:
             )
 
         for layer in self.main_encoder.mlp_layers:
-            self.params = self.params + [layer.W, layer.b]
+            self.params = self.params + layer.params
         for layer in self.mu_encoder.mlp_layers:
-            self.params = self.params + [layer.W, layer.b]
+            self.params = self.params + layer.params
         for layer in self.log_sigma_encoder.mlp_layers:
-            self.params = self.params + [layer.W, layer.b]
+            self.params = self.params + layer.params
         for layer in self.phi_x.mlp_layers:
-            self.params = self.params + [layer.W, layer.b]
+            self.params = self.params + layer.params
         for layer in self.phi_z.mlp_layers:
-            self.params = self.params + [layer.W, layer.b]
+            self.params = self.params + layer.params
         #######################
         # END CREATE ENCODERS #
         #######################
@@ -273,7 +273,7 @@ class RVAE:
                                              input=self.h[-1],
                                              n_in=self.n_rec_hidden[-1],
                                              n_out=self.n_hidden_prior,
-                                             activation=T.tanh,
+                                             activation=T.nnet.relu,
                                              )
         self.prior_mu = dA.SdA(
             numpy_rng=self.np_rng,
@@ -284,9 +284,9 @@ class RVAE:
             dA_layers_sizes=self.n_latent,
             tie_weights=False,
             tie_biases=False,
-            encoder_activation_fn='identity',
-            decoder_activation_fn='identity',
-            global_decoder_activation_fn='identity',
+            encoder_activation_fn='sigmoid',
+            decoder_activation_fn='sigmoid',
+            global_decoder_activation_fn='sigmoid',
             initialize_W_as_identity=False,
             initialize_W_prime_as_W_transpose=False,
             add_noise_to_W=False,
@@ -305,9 +305,9 @@ class RVAE:
             dA_layers_sizes=self.n_latent,
             tie_weights=False,
             tie_biases=False,
-            encoder_activation_fn='identity',
-            decoder_activation_fn='identity',
-            global_decoder_activation_fn='identity',
+            encoder_activation_fn='softplus',
+            decoder_activation_fn='softplusy',
+            global_decoder_activation_fn='softplus',
             initialize_W_as_identity=False,
             initialize_W_prime_as_W_transpose=False,
             add_noise_to_W=False,
@@ -319,9 +319,9 @@ class RVAE:
         
         self.params = self.params + self.prior.params
         for layer in self.prior_mu.mlp_layers:
-            self.params = self.params + [layer.W, layer.b]
+            self.params = self.params + layer.params
         for layer in self.prior_log_sigma.mlp_layers:
-            self.params = self.params + [layer.W, layer.b]
+            self.params = self.params + layer.params
         ####################
         # END CREATE PRIOR #
         ####################
@@ -361,9 +361,9 @@ class RVAE:
             dA_layers_sizes=[self.n_features],
             tie_weights=False,
             tie_biases=False,
-            encoder_activation_fn='relu',
-            decoder_activation_fn='relu',
-            global_decoder_activation_fn='relu',
+            encoder_activation_fn='sigmoid',
+            decoder_activation_fn='sigmoid',
+            global_decoder_activation_fn='sigmoid',
             initialize_W_as_identity=False,
             initialize_W_prime_as_W_transpose=False,
             add_noise_to_W=False,
@@ -382,9 +382,9 @@ class RVAE:
             dA_layers_sizes=[self.n_features],
             tie_weights=False,
             tie_biases=False,
-            encoder_activation_fn='identity',
-            decoder_activation_fn='identity',
-            global_decoder_activation_fn='identity',
+            encoder_activation_fn='softplus',
+            decoder_activation_fn='softplus',
+            global_decoder_activation_fn='softplus',
             initialize_W_as_identity=False,
             initialize_W_prime_as_W_transpose=False,
             add_noise_to_W=False,
@@ -395,9 +395,9 @@ class RVAE:
             )
 
         for layer in self.main_decoder.mlp_layers:
-            self.params = self.params + [layer.W, layer.b]
+            self.params = self.params + layer.params
         for layer in self.main_decoder_mu.mlp_layers:
-            self.params = self.params + [layer.W, layer.b]
+            self.params = self.params + layer.params
         # Not used in output calibraion, output generation
         # for layer in self.main_decoder_log_sigma.mlp_layers:
         #     self.params = self.params + [layer.W, layer.b]
@@ -437,13 +437,14 @@ class RVAE:
                                                       n_out=self.n_features,
                                                       activation=global_activation_fn,
                                                       )
-        
-        self.params = self.params + self.global_decoder.params
+
+        # XXX
+        # self.params = self.params + self.global_decoder.params
         ##########################################
         # END CREATE GLOBAL HIDDEN LAYER WEIGHTS #
         ##########################################
 
-    def reconstruction_sample(self, mu, logSigma):
+    def reconstruction_sample_old(self, mu, logSigma):
         global SEED
         srng = T.shared_randomstreams.RandomStreams(seed=SEED)
         dev = 0.0025 * T.ones((self.batch_size, self.n_latent[-1]))
@@ -451,8 +452,20 @@ class RVAE:
         z = mu + T.exp(0.5 * logSigma) * dev
         return z
 
-    def KLDivergence(self, mu, logSigma, prior_mu, prior_logSigma):
+    def reconstruction_sample(self, mu, logSigma):
+        global SEED
+        srng = T.shared_randomstreams.RandomStreams(seed=SEED)
+        dev = 0.0025 * T.ones((self.batch_size, self.n_latent[-1]))
+        # dev = srng.normal((self.batch_size, self.n_latent[-1]))
+        z = mu + logSigma * dev
+        return z
+
+    def KLDivergence_old(self, mu, logSigma, prior_mu, prior_logSigma):
         kld_element = (prior_logSigma - logSigma + (T.exp(logSigma) + (mu - prior_mu)**2) / T.exp(prior_logSigma) - 1)
+        return 0.5 * kld_element
+
+    def KLDivergence(self, mu, logSigma, prior_mu, prior_logSigma):
+        kld_element = (2. * T.log(prior_logSigma) - 2*T.log(logSigma) + (logSigma**2 + (mu - prior_mu)**2) / prior_logSigma**2 - 1)
         return 0.5 * kld_element
 
     def get_hidden_cost_output_from_input(self, x_in):
@@ -470,7 +483,8 @@ class RVAE:
             prior_mu = self.prior_mu.output_from_input(prior)
             prior_logSigma = self.prior_log_sigma.output_from_input(prior)
 
-            z = mu + T.exp(0.5 * logSigma) * dev
+            # z = mu + T.exp(0.5 * logSigma) * dev
+            z = mu + logSigma * dev
                                     
             phi_z = self.phi_z.output_from_input(z)
 
@@ -487,18 +501,20 @@ class RVAE:
             KLD = self.KLDivergence(mu, logSigma, prior_mu, prior_logSigma)
 
             # log(p(x|z))
-            x_tilde = self.global_decoder.output_from_input(decoder_mu)
+            # XXX
+            # x_tilde = self.global_decoder.output_from_input(decoder_mu)
+            x_tilde = decoder_mu
             log_p_x_z = -1 * T.sum( x_step * T.log(x_tilde) + (1 - x_step)*T.log(1 - x_tilde), axis=0)
 
             obj = T.mean(log_p_x_z + KLD)
         
-            return h_t, obj, decoder_mu
+            return h_t, obj, x_tilde
 
         [h_n, obj, x],inner_updates = theano.scan(
             fn=iter_step,
             sequences=[x_in],
             truncate_gradient=self.bptt_truncate,
-            outputs_info=[T.as_tensor_variable(np.zeros(self.h_shape), self.h.dtype),
+            outputs_info=[theano.shared(np.zeros(self.h_shape, dtype=self.h.dtype), broadcastable=self.h.broadcastable),
                           None,
                           None],
             non_sequences=[T.as_tensor_variable(self.srng.normal((self.batch_size, self.n_latent[-1])), self.h.dtype)],
@@ -543,7 +559,7 @@ class RVAE:
 
         one = T.constant(1.0)
 
-        def _updates(param, cache, df, beta=0.9, eta=1.e-2, epsilon=1.e-6):
+        def _updates(param, cache, df, beta=0.8, eta=1.e-2, epsilon=1.e-6):
             cache_val = beta * cache + (one-beta) * df**2
             x = T.switch(T.abs_(cache_val) < epsilon,
                          cache_val,
@@ -571,6 +587,49 @@ class RVAE:
             updates.append(cache_updates)
 
         return (cost, updates)
+
+
+    def sample(self, seq_len):
+        def sample_one(h):
+            prior = self.prior.output_from_input(h[-1])
+            prior_mu = self.prior_mu.output_from_input(prior)
+            prior_logSigma = self.prior_log_sigma.output_from_input(prior)
+
+            dev = T.as_tensor_variable(self.srng.normal((1, self.n_latent[-1])), self.h.dtype)
+            # z = prior_mu + T.exp(0.5 * prior_logSigma) * dev
+            z = prior_mu + prior_logSigma * dev
+                                    
+            phi_z = self.phi_z.output_from_input(z)
+
+            decoder_input = T.concatenate([phi_z, h[-1]], axis=1)
+            decoder_output = self.main_decoder.output_from_input(decoder_input)
+            decoder_mu = self.main_decoder_mu.output_from_input(decoder_output)
+
+            phi_x = self.phi_x.output_from_input(decoder_mu)
+
+            recurrent_input = T.shape_padaxis(T.concatenate([phi_x, phi_z], axis=1), axis=2)            
+            h_t = T.swapaxes(self.recurrent_layer.hidden_output_from_input(recurrent_input), 1, 2)
+
+            # log(p(x|z))
+            # XXX
+            # x_tilde = self.global_decoder.output_from_input(decoder_mu)
+            x_tilde = decoder_mu
+
+            # return [h_t[:, -2:-1, :], x_tilde]
+            # for batch_size == 1
+            return [h_t, x_tilde]
+
+        [h_all, x_all], sample_updates = theano.scan(
+            fn=sample_one,
+            outputs_info=[theano.shared(np.zeros((self.h_shape[0], 1, self.h_shape[2])), broadcastable=self.h.broadcastable),
+                          None],
+            n_steps=seq_len,            
+            )
+        
+        x_all0 = theano.function([], x_all[:, 0, :])()
+        
+        return x_all0
+
 
     def reconstruct_all(self, train_set_x):
         encoder_output = self.main_encoder.output()

@@ -1,5 +1,6 @@
 import numpy as np
 from numpy.linalg import cholesky
+import matplotlib.pyplot as plot
 import time
 import os
 import pickle
@@ -73,16 +74,25 @@ train_set_x = theano.shared(name='train_set_x', value=train_set_x0)
 # n_rec_hidden     = [150]
 # n_rec_layers     = 3
 
+# n_features       = 28
+# n_hidden_encoder = [25]
+# n_phi_x_hidden   = [25]
+# n_phi_z_hidden   = [25]
+# n_latent         = [28]
+# n_hidden_prior   = 25
+# n_hidden_decoder = [25]
+# n_rec_hidden     = [25]
+# n_rec_layers     = 2
+
 n_features       = 28
-n_hidden_encoder = [25]
-n_phi_x_hidden   = [25]
-n_phi_z_hidden   = [25]
+n_hidden_encoder = [25, 25]
+n_phi_x_hidden   = [25, 25]
+n_phi_z_hidden   = [25, 25]
 n_latent         = [28]
 n_hidden_prior   = 25
-n_hidden_decoder = [25]
-n_rec_hidden     = [25]
+n_hidden_decoder = [25, 25]
+n_rec_hidden     = [25, 25]
 n_rec_layers     = 3
-
 
 #################
 # Solver params #
@@ -98,7 +108,7 @@ adam_solver_kwargs = dict(learning_rate=0.001,beta1=0.95,beta2=0.999,epsilon=1e-
 x = T.matrix('x')
 index = T.iscalar('index')
 # OLD PARAMS
-batch_size = 2
+batch_size = 1
 
 # This represents one minibatch, take care of it later with (index, givens) logic
 train_set_x_batch0 = train_set_x.get_value()[:,0:batch_size, :]
@@ -122,11 +132,11 @@ model = RVAE_theano.RVAE(n_features,
 
 
 # Test
-# self = model
-# h = self.h
-# x_in = train_set_x_batch
-# x_step = train_set_x_batch[0]
-# dev = self.srng.normal((self.batch_size, self.n_latent[-1]))
+self = model
+h = self.h
+x_in = train_set_x_batch
+x_step = train_set_x_batch[0]
+dev = self.srng.normal((self.batch_size, self.n_latent[-1]))
 
 index = T.lscalar('index')
 model.x = train_set_x[:, 0:batch_size, :]
@@ -138,3 +148,14 @@ train_rvae = theano.function(
     updates=updates,
     givens=[(model.x, train_set_x[:, index*batch_size:(index+1)*batch_size, :])],
     )
+
+num_epochs = range(10)
+num_batches = range(int(N/batch_size))
+for epoch in num_epochs:
+    print('EPOCH {}'.format(epoch))
+    for i in num_batches:
+        print(i,' : ', train_rvae(i))
+        # if i % 10000 == 0:
+        #     plot.imshow(model.sample(28)); plot.show()
+        
+        
