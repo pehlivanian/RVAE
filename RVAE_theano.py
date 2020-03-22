@@ -306,7 +306,7 @@ class RVAE:
             tie_weights=False,
             tie_biases=False,
             encoder_activation_fn='softplus',
-            decoder_activation_fn='softplusy',
+            decoder_activation_fn='softplus',
             global_decoder_activation_fn='softplus',
             initialize_W_as_identity=False,
             initialize_W_prime_as_W_transpose=False,
@@ -460,12 +460,8 @@ class RVAE:
         z = mu + logSigma * dev
         return z
 
-    def KLDivergence_old(self, mu, logSigma, prior_mu, prior_logSigma):
-        kld_element = (prior_logSigma - logSigma + (T.exp(logSigma) + (mu - prior_mu)**2) / T.exp(prior_logSigma) - 1)
-        return 0.5 * kld_element
-
     def KLDivergence(self, mu, logSigma, prior_mu, prior_logSigma):
-        kld_element = (2. * T.log(prior_logSigma) - 2*T.log(logSigma) + (logSigma**2 + (mu - prior_mu)**2) / prior_logSigma**2 - 1)
+        kld_element = T.sum(2. * T.log(prior_logSigma) - 2*T.log(logSigma) + (logSigma**2 + (mu - prior_mu)**2) / prior_logSigma**2 - 1)
         return 0.5 * kld_element
 
     def get_hidden_cost_output_from_input(self, x_in):
@@ -504,9 +500,9 @@ class RVAE:
             # XXX
             # x_tilde = self.global_decoder.output_from_input(decoder_mu)
             x_tilde = decoder_mu
-            log_p_x_z = -1 * T.sum( x_step * T.log(x_tilde) + (1 - x_step)*T.log(1 - x_tilde), axis=0)
+            log_p_x_z = T.sum(-1 * T.sum( x_step * T.log(x_tilde) + (1 - x_step)*T.log(1 - x_tilde), axis=0))
 
-            obj = T.mean(log_p_x_z + KLD)
+            obj = log_p_x_z + KLD
         
             return h_t, obj, x_tilde
 

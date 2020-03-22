@@ -64,15 +64,15 @@ train_set_x = theano.shared(name='train_set_x', value=train_set_x0)
 
 # Theano
 # OLD PARAMS
-# n_features       = 28
-# n_hidden_encoder = [150]
-# n_phi_x_hidden   = [150]
-# n_phi_z_hidden   = [150]
-# n_latent         = [28]
-# n_hidden_prior   = 150
-# n_hidden_decoder = [150]
-# n_rec_hidden     = [150]
-# n_rec_layers     = 3
+n_features       = 28
+n_hidden_encoder = [150, 150]
+n_phi_x_hidden   = [150, 150]
+n_phi_z_hidden   = [150, 150]
+n_latent         = [28]
+n_hidden_prior   = 150
+n_hidden_decoder = [150, 150]
+n_rec_hidden     = [150]
+n_rec_layers     = 2
 
 # n_features       = 28
 # n_hidden_encoder = [25]
@@ -84,15 +84,15 @@ train_set_x = theano.shared(name='train_set_x', value=train_set_x0)
 # n_rec_hidden     = [25]
 # n_rec_layers     = 2
 
-n_features       = 28
-n_hidden_encoder = [25, 25]
-n_phi_x_hidden   = [25, 25]
-n_phi_z_hidden   = [25, 25]
-n_latent         = [28]
-n_hidden_prior   = 25
-n_hidden_decoder = [25, 25]
-n_rec_hidden     = [25, 25]
-n_rec_layers     = 3
+# n_features       = 28
+# n_hidden_encoder = [28]
+# n_phi_x_hidden   = [28]
+# n_phi_z_hidden   = [28]
+# n_latent         = [28]
+# n_hidden_prior   = 28
+# n_hidden_decoder = [28]
+# n_rec_hidden     = [28]
+# n_rec_layers     = 3
 
 #################
 # Solver params #
@@ -108,7 +108,7 @@ adam_solver_kwargs = dict(learning_rate=0.001,beta1=0.95,beta2=0.999,epsilon=1e-
 x = T.matrix('x')
 index = T.iscalar('index')
 # OLD PARAMS
-batch_size = 1
+batch_size = 2
 
 # This represents one minibatch, take care of it later with (index, givens) logic
 train_set_x_batch0 = train_set_x.get_value()[:,0:batch_size, :]
@@ -151,11 +151,18 @@ train_rvae = theano.function(
 
 num_epochs = range(10)
 num_batches = range(int(N/batch_size))
+report_each = 100
+costs = list()
+
 for epoch in num_epochs:
     print('EPOCH {}'.format(epoch))
     for i in num_batches:
-        print(i,' : ', train_rvae(i))
-        # if i % 10000 == 0:
-        #     plot.imshow(model.sample(28)); plot.show()
+        costs.append(train_rvae(i))
+        if not i % report_each:
+            print('Minibatch: {} Avg Cost: {}'.format(i, np.mean(costs)))
+    filename = '/home/charles/git/theano_RVAE/VRAE_epoch_{}'.format(epoch)
+    f = open(filename, 'wb')
+    pickle.dump(model, f)
+    f.close()
         
         
