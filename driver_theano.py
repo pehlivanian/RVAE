@@ -72,7 +72,7 @@ n_latent         = [28]
 n_hidden_prior   = 150
 n_hidden_decoder = [150, 150]
 n_rec_hidden     = [150]
-n_rec_layers     = 2
+n_rec_layers     = 3
 
 # n_features       = 28
 # n_hidden_encoder = [25]
@@ -92,15 +92,15 @@ n_rec_layers     = 2
 # n_hidden_prior   = 28
 # n_hidden_decoder = [28]
 # n_rec_hidden     = [28]
-# n_rec_layers     = 3
+# n_rec_layers     = 2
 
 #################
 # Solver params #
 #################
 # Solver params, by type
 gd_solver_kwargs = dict(learning_rate=0.1)
-rmsprop_solver_kwargs = dict(eta=1.e-4,beta=.7,epsilon=1.e-6)
-adam_solver_kwargs = dict(learning_rate=0.001,beta1=0.95,beta2=0.999,epsilon=1e-8)
+rmsprop_solverKwargs = dict(eta=1.e-3,beta=.8,epsilon=1.e-6)
+adam_solverKwargs = dict(learning_rate=0.001,beta1=0.9,beta2=0.999,epsilon=1e-8)
 
 #########
 # Model #
@@ -108,7 +108,7 @@ adam_solver_kwargs = dict(learning_rate=0.001,beta1=0.95,beta2=0.999,epsilon=1e-
 x = T.matrix('x')
 index = T.iscalar('index')
 # OLD PARAMS
-batch_size = 2
+batch_size = 1
 
 # This represents one minibatch, take care of it later with (index, givens) logic
 train_set_x_batch0 = train_set_x.get_value()[:,0:batch_size, :]
@@ -125,7 +125,8 @@ model = RVAE_theano.RVAE(n_features,
                          train_set_x_batch,
                          batch_size=batch_size,
                          solver='rmsprop',
-                         solverKwargs=dict(eta=1.e-4, beta=.7, epsilon=1.e-6),
+                         rmsprop_solverKwargs=rmsprop_solverKwargs,
+                         adam_solverKwargs=adam_solverKwargs,
                          L=1,
                          n_rec_layers=n_rec_layers,
                          rng=None)
@@ -140,11 +141,12 @@ dev = self.srng.normal((self.batch_size, self.n_latent[-1]))
 
 index = T.lscalar('index')
 model.x = train_set_x[:, 0:batch_size, :]
-cost, updates = model.compute_cost_updates()
+# cost, updates, log_p_x_z, KLD = model.compute_rmsprop_cost_updates()
+cost, updates, log_p_x_z, KLD = model.compute_adam_cost_updates()
 cost0 = theano.function([], cost)()
 train_rvae = theano.function(
     [index],
-    cost,
+    [cost, log_p_x_z, KLD],
     updates=updates,
     givens=[(model.x, train_set_x[:, index*batch_size:(index+1)*batch_size, :])],
     )
@@ -153,14 +155,21 @@ num_epochs = range(10)
 num_batches = range(int(N/batch_size))
 report_each = 100
 costs = list()
+log_p_x_zs = list()
+KLDs = list()
 
 for epoch in num_epochs:
     print('EPOCH {}'.format(epoch))
     for i in num_batches:
-        costs.append(train_rvae(i))
+        cost, log_p_x_z, KLD = train_rvae(i)
+        costs.append(cost)
+        log_p_x_zs.append(log_p_x_z)
+        KLDs.append(KLD)
         if not i % report_each:
-            print('Minibatch: {} Avg Cost: {}'.format(i, np.mean(costs)))
-    filename = '/home/charles/git/theano_RVAE/VRAE_epoch_{}'.format(epoch)
+            print('Minibatch: {} Avg Cost: {} log_p_x_z: {} KLD: {}'.format(i, np.mean(costs), np.mean(log_p_x_zs), np.mean(KLDs)))
+            plot.imshow(model.sample(28))
+            plot.pause(1e-6)
+    filename = '/home/charles/git/theano_RVAE/RVAE_global_epoch_{}'.format(epoch)
     f = open(filename, 'wb')
     pickle.dump(model, f)
     f.close()

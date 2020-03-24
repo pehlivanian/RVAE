@@ -34,10 +34,12 @@ def train(train_loader, model, optimizer, epoch, batch_size, clip, print_every, 
 
 		if batch_idx % print_every == 0:
 			print('Train Epoch: {} [{}/{} ({:.0f}%)]\t KLD Loss: {:.6f} \t NLL Loss: {:.6f}'.format(
-			    epoch, batch_idx * len(data), len(train_loader.dataset),
-			    100. * batch_idx / len(train_loader),
-			    kld_loss.data.item() / batch_size,
-			    nll_loss.data.item() / batch_size))
+				epoch,
+				batch_idx * len(data),
+				len(train_loader.dataset),
+				100. * batch_idx * len(data) / len(train_loader.dataset),
+				kld_loss.data.item() / batch_size,
+				nll_loss.data.item() / batch_size))
 
 			sample = model.sample(28)
 			plt.imshow(sample.numpy())

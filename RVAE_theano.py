@@ -71,7 +71,8 @@ class RVAE:
                  input,
                  batch_size=100,
                  solver='rmsprop',
-                 solverKwargs=dict(eta=1.e-4,beta=.7,epsilon=1.e-6),
+                 rmsprop_solverKwargs=dict(eta=1.e-3,beta=.7,epsilon=1.e-6),
+                 adam_solverKwargs=dict(),
                  L=1,
                  n_rec_layers=2,
                  bptt_truncate=-1,
@@ -108,7 +109,8 @@ class RVAE:
         self.z = z
 
         self.solver = solver
-        self.solverKwargs = solverKwargs
+        self.rmsprop_solverKwargs = rmsprop_solverKwargs
+        self.adam_solverKwargs = adam_solverKwargs
 
         self.global_activation_fn = 'sigmoid'
 
@@ -410,15 +412,15 @@ class RVAE:
         #########################
 
         recurrent_input = T.concatenate([self.phi_x.output(), self.phi_z.output()], axis=1)
-        self.recurrent_layer = RNN.GRU_for_RVAE(self.np_rng,
-                                                recurrent_input.T,
-                                                recurrent_input.T,
-                                                self.n_phi_x_hidden[-1] + self.n_phi_z_hidden[-1],
-                                                self.n_rec_hidden[-1],
-                                                self.n_rec_layers,
-                                                batch_size=self.batch_size,
-                                                theano_rng=None,
-                                                bptt_truncate=-1)
+        self.recurrent_layer = RNN.GRU(self.np_rng,
+                                       recurrent_input.T,
+                                       recurrent_input.T,
+                                       self.n_phi_x_hidden[-1] + self.n_phi_z_hidden[-1],
+                                       self.n_rec_hidden[-1],
+                                       self.n_rec_layers,
+                                       batch_size=self.batch_size,
+                                       theano_rng=None,
+                                       bptt_truncate=-1)
 
         self.params = self.params + self.recurrent_layer.hidden_params        
         #############################
@@ -430,35 +432,19 @@ class RVAE:
         ############################################
         # The HiddenLayer class accepts None to specify linear activation
         # We will use sigmoid however as cost involves binary_crossentropy
-        global_activation_fn = _get_activation('sigmoid')
-        self.global_decoder = hiddenlayer.HiddenLayer(rng=self.np_rng,
-                                                      input=self.main_decoder_mu.output(),
-                                                      n_in=self.n_features,
-                                                      n_out=self.n_features,
-                                                      activation=global_activation_fn,
-                                                      )
-
+        # global_activation_fn = _get_activation('sigmoid')
         # XXX
+        # Skip for now
+        # self.global_decoder = hiddenlayer.HiddenLayer(rng=self.np_rng,
+        #                                               input=self.main_decoder_mu.output(),
+        #                                               n_in=self.n_features,
+        #                                               n_out=self.n_features,
+        #                                               activation=global_activation_fn,
+        #                                               )
         # self.params = self.params + self.global_decoder.params
         ##########################################
         # END CREATE GLOBAL HIDDEN LAYER WEIGHTS #
         ##########################################
-
-    def reconstruction_sample_old(self, mu, logSigma):
-        global SEED
-        srng = T.shared_randomstreams.RandomStreams(seed=SEED)
-        dev = 0.0025 * T.ones((self.batch_size, self.n_latent[-1]))
-        # dev = srng.normal((self.batch_size, self.n_latent[-1]))
-        z = mu + T.exp(0.5 * logSigma) * dev
-        return z
-
-    def reconstruction_sample(self, mu, logSigma):
-        global SEED
-        srng = T.shared_randomstreams.RandomStreams(seed=SEED)
-        dev = 0.0025 * T.ones((self.batch_size, self.n_latent[-1]))
-        # dev = srng.normal((self.batch_size, self.n_latent[-1]))
-        z = mu + logSigma * dev
-        return z
 
     def KLDivergence(self, mu, logSigma, prior_mu, prior_logSigma):
         kld_element = T.sum(2. * T.log(prior_logSigma) - 2*T.log(logSigma) + (logSigma**2 + (mu - prior_mu)**2) / prior_logSigma**2 - 1)
@@ -466,7 +452,7 @@ class RVAE:
 
     def get_hidden_cost_output_from_input(self, x_in):
 
-        def iter_step(x_step, h, dev):
+        def iter_step(x_step, dev, h):
             phi_x = self.phi_x.output_from_input(x_step)
 
             encoder_input = T.concatenate([phi_x, h[-1]], axis=1)        
@@ -504,58 +490,99 @@ class RVAE:
 
             obj = log_p_x_z + KLD
         
-            return h_t, obj, x_tilde
+            return h_t, obj, x_tilde, log_p_x_z, KLD
 
-        [h_n, obj, x],inner_updates = theano.scan(
+        [h_n, obj, x, log_p_x_z, KLD],inner_updates = theano.scan(
             fn=iter_step,
-            sequences=[x_in],
+            sequences=[x_in,
+                       T.as_tensor_variable(self.srng.normal((self.n_features, self.batch_size, self.n_latent[-1])), self.h.dtype)],
             truncate_gradient=self.bptt_truncate,
             outputs_info=[theano.shared(np.zeros(self.h_shape, dtype=self.h.dtype), broadcastable=self.h.broadcastable),
                           None,
+                          None,
+                          None,
                           None],
-            non_sequences=[T.as_tensor_variable(self.srng.normal((self.batch_size, self.n_latent[-1])), self.h.dtype)],
             )
 
         h_out = T.swapaxes(h_n, 0, 1)[-1]
         obj_out = T.sum(obj)
         x_out = x
+        log_p_x_z_out = T.sum(log_p_x_z)
+        KLD_out = T.sum(KLD)
 
-        return h_out, obj_out, x_out
+        return h_out, obj_out, x_out, log_p_x_z_out, KLD_out
 
     def get_hidden_cost_output(self):
         return self.get_hidden_cost_output_from_input(self.x)
     
     def output_from_input(self, input):
-        _, _, x = self.get_hidden_cost_output_from_input(input)
+        _, _, x, _, _ = self.get_hidden_cost_output_from_input(input)
         return x
 
     def output(self):
         return self.output_from_input(self.x)
 
     def predict_from_input(self, input):
-        _, _, x = self.get_hidden_cost_output_from_input(input)
+        _, _, x, _, _ = self.get_hidden_cost_output_from_input(input)
         return x
 
     def predict(self):
         return self.predict_form_input(self.x)
 
     def objective_from_input(self, input):
-        _, obj, _ = self.get_hidden_cost_output_from_input(input)
+        _, obj, _, _, _ = self.get_hidden_cost_output_from_input(input)
         return obj
 
     def objective(self):
         return self.objective_from_input(self.x)
 
-    def compute_cost_updates(self):
+    def compute_adam_cost_updates(self):
+        ''' simple adam
+        '''
+
+        _, cost, _, log_p_x_z, KLD = self.get_hidden_cost_output()
+
+        grads = T.grad(cost, self.params)
+
+        updates = list()
+        
+        beta1 = self.adam_solverKwargs['beta1']
+        beta2 = self.adam_solverKwargs['beta2']
+        epsilon = self.adam_solverKwargs['epsilon']
+        learning_rate = self.adam_solverKwargs['learning_rate']
+        
+        epoch_pre = theano.shared(np.asarray(.0, dtype=theano.config.floatX))
+        epoch_num = epoch_pre + 1
+        gamma = learning_rate * T.sqrt(1 - beta2 ** epoch_num) / (1 - beta1 ** epoch_num)
+
+        grads = T.grad(cost, self.params)
+
+        for param, grad in zip(self.params, grads):
+            v = param.get_value(borrow=True)
+            m_pre = theano.shared(np.zeros(v.shape, dtype=v.dtype), broadcastable=param.broadcastable)
+            v_pre = theano.shared(np.zeros(v.shape, dtype=v.dtype), broadcastable=param.broadcastable)
+
+            m_t = beta1 * m_pre + (1 - beta1) * grad
+            v_t = beta2 * v_pre + (1 - beta2) * grad ** 2
+            step = gamma * m_t / (T.sqrt(v_t) + epsilon)
+
+            updates.append((m_pre, m_t))
+            updates.append((v_pre, v_t))
+            updates.append((param, param - step))
+
+        updates.append((epoch_pre, epoch_num))
+        return cost, updates, log_p_x_z, KLD        
+        
+    def compute_rmsprop_cost_updates(self):
         ''' simple rmsprop
         '''
-        _, cost, _ = self.get_hidden_cost_output()
+        _, cost, _, log_p_x_z, KLD = self.get_hidden_cost_output()
 
         grads = T.grad(cost, self.params)
 
         one = T.constant(1.0)
 
-        def _updates(param, cache, df, beta=0.8, eta=1.e-2, epsilon=1.e-6):
+        def _updates(param, cache, df, beta=0.8, eta=1.e-3, epsilon=1.e-6):
             cache_val = beta * cache + (one-beta) * df**2
             x = T.switch(T.abs_(cache_val) < epsilon,
                          cache_val,
@@ -575,14 +602,14 @@ class RVAE:
             param_updates, cache_updates = _updates(param,
                                                     cache,
                                                     grad,
-                                                    beta=self.solverKwargs['beta'],
-                                                    eta=self.solverKwargs['eta'],
-                                                    epsilon=self.solverKwargs['epsilon'])
+                                                    beta=self.rmsprop_solverKwargs['beta'],
+                                                    eta=self.rmsprop_solverKwargs['eta'],
+                                                    epsilon=self.rmsprop_solverKwargs['epsilon'])
 
             updates.append(param_updates)
             updates.append(cache_updates)
 
-        return (cost, updates)
+        return (cost, updates, log_p_x_z, KLD)
 
 
     def sample(self, seq_len):
@@ -626,84 +653,3 @@ class RVAE:
         
         return x_all0
 
-
-    def reconstruct_all(self, train_set_x):
-        encoder_output = self.main_encoder.output()
-        mu = self.mu_encoder.output()
-        logSigma = self.log_sigma_encoder.output()
-        z = self.sample(mu, logSigma).dimshuffle(1,2)
-        hidden_decoded = self.main_decoder.output_from_input(z)
-        x_hat = self.global_decoder.output_from_input(hidden_decoded)
-
-        # Generate entire set
-        fn = theano.function([], x_hat, givens={self.x:train_set_x})
-        return fn()
-
-    #########################################################
-    # START PRETRAINING FUNCTIONS FOR EMBEDDED AUTOENCODERS #
-    #########################################################
-    def encoder_pretraining_functions(self, train_set_x, batch_size):
-        return self.main_encoder.pretraining_functions(train_set_x, batch_size, update=True)
-
-    def mu_encoder_pretraining_functions(self, train_set_x, batch_size):
-        encoder_shared = theano.shared(value=theano.function([], self.main_encoder.output(), givens={self.x:train_set_x})(),
-                                       name='encoder_shared',
-                                       borrow=True)
-        fns = self.mu_encoder.pretraining_functions(train_set_x=encoder_shared,
-                                                     batch_size=batch_size)
-        return fns
-    
-    def log_sigma_encoder_pretraining_functions(self, train_set_x, batch_size):
-        encoder_shared = theano.shared(value=theano.function([], self.main_encoder.output(), givens={self.x:train_set_x})(),
-                                       name='encoder_shared',
-                                       borrow=True)
-        fns = self.log_sigma_encoder.pretraining_functions(train_set_x=encoder_shared,
-                                                     batch_size=batch_size)
-        return fns
-
-    def decoder_pretraining_functions(self, train_set_x, batch_size):
-        encoder_output = self.main_encoder.output()
-        mu = self.mu_encoder.output()
-        logSigma = self.log_sigma_encoder.output()
-        z = self.sample(mu, logSigma).dimshuffle(1,2)
-        z_shared = theano.shared(value=theano.function([], z, givens={self.x:train_set_x})(), name='z_shared', borrow=True)
-        return self.main_decoder.pretraining_functions(z_shared, batch_size, update=True)
-
-    def pretraining_functions(self, train_set_x, batch_size):
-        return self.encoder_pretraining_functions(train_set_x, batch_size) + \
-               self.mu_encoder_pretraining_functions(train_set_x, batch_size) + \
-               self.log_sigma_encoder_pretraining_functions(train_set_x, batch_size) + \
-               self.decoder_pretraining_functions(train_set_x, batch_size)
-    #######################################################
-    # END PRETRAINING FUNCTIONS FOR EMBEDDED AUTOENCODERS #
-    #######################################################
-
-    def generate(self, num_devs, seed):
-        np_rng = np.random.RandomState(seed)
-        z = T.matrix('z')
-        hidden_decoded = self.main_decoder.output_from_input(z)
-        x_hat = self.global_decoder.output_from_input(hidden_decoded)
-        fn = theano.function([z], x_hat )
-        z_emp = np_rng.normal(0, 1, (num_devs, self.n_latent))
-        x_out = fn(z_emp)
-        return x_out
-
-    def describe(self, train_set_x, title=''):
-        # main encoder
-        main_encoder_desc = self.main_encoder.describe(train_set_x, title='MAIN_ENCODER_'+title)
-
-        # mu encoder
-        encoder_shared = theano.shared(value=theano.function([],
-                                                             self.main_encoder.output(),
-                                                             givens={self.x:train_set_x})(),
-                                       name='encoder_shared',
-                                       borrow=True)
-        mu_encoder_desc   = self.mu_encoder.describe(encoder_shared, title='MU_ENCODER'+title)
-
-
-        # log sigma encoder
-        log_sigma_encoder_desc   = self.log_sigma_encoder.describe(encoder_shared, title='LOGSIGMA_ENCODER_'+title)
-
-        # main decoder
-        # main_encoder_desc   = self.main_decoder.describe(train_set_x, title='MAIN_DECODER_'+title)
-        return main_encoder_desc + mu_encoder_desc + log_sigma_encoder_desc
