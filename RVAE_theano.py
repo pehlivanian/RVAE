@@ -11,6 +11,7 @@ from collections import OrderedDict
 
 from theano_utils import (gd_solver, rmsprop_solver, negative_feedback, gd_optimizer,
                           rmsprop_optimizer, adam_optimizer, load_data)
+import gpu_utils as utils
 
 import RNN
 import dA
@@ -76,6 +77,7 @@ class RVAE:
                  L=1,
                  n_rec_layers=2,
                  bptt_truncate=-1,
+                 GMM_nll=False,
                  rng=None):
 
         self.params = list()
@@ -88,6 +90,7 @@ class RVAE:
         self.np_rng = rng
         self.srng = T.shared_randomstreams.RandomStreams(seed=SEED)        
         self.rng = theano_rng
+        self.GMM_nll = GMM_nll
 
         self.bptt_truncate = bptt_truncate
 
@@ -167,7 +170,7 @@ class RVAE:
 
         self.h_shape = (self.n_rec_layers, input.get_value().shape[1], self.n_rec_hidden[-1])
         self.h = theano.shared(name='h', value=np.zeros(self.h_shape))
-        encoder_input = T.concatenate([self.phi_x.output(), self.h[-1]], axis=1)
+        encoder_input = utils.concatenate([self.phi_x.output(), self.h[-1]], axis=1)
         
         self.main_encoder = dA.SdA(
             numpy_rng=self.np_rng,
@@ -332,7 +335,7 @@ class RVAE:
         # START CREATE DECODER #
         ########################
 
-        decoder_input = T.concatenate([self.phi_z.output(), self.h[-1]], axis=1)
+        decoder_input = utils.concatenate([self.phi_z.output(), self.h[-1]], axis=1)
         self.main_decoder = dA.SdA(
             numpy_rng=self.np_rng,
             theano_rng=theano_rng,
@@ -375,34 +378,34 @@ class RVAE:
             solver_kwargs=dict(eta=1.e-4,beta=.7,epsilon=1.e-6),
             )
 
-        self.main_decoder_log_sigma = dA.SdA(
-            numpy_rng=self.np_rng,
-            theano_rng=theano_rng,
-            input=self.main_decoder.output(),
-            symmetric=False,
-            n_visible=self.n_hidden_decoder[-1],
-            dA_layers_sizes=[self.n_features],
-            tie_weights=False,
-            tie_biases=False,
-            encoder_activation_fn='softplus',
-            decoder_activation_fn='softplus',
-            global_decoder_activation_fn='softplus',
-            initialize_W_as_identity=False,
-            initialize_W_prime_as_W_transpose=False,
-            add_noise_to_W=False,
-            noise_limit=0.,
-            solver_type='rmsprop',
-            predict_modifier_type='negative_feedback',
-            solver_kwargs=dict(eta=1.e-4,beta=.7,epsilon=1.e-6),
-            )
-
+        if self.GMM_nll:
+            self.main_decoder_log_sigma = dA.SdA(
+                numpy_rng=self.np_rng,
+                theano_rng=theano_rng,
+                input=self.main_decoder.output(),
+                symmetric=False,
+                n_visible=self.n_hidden_decoder[-1],
+                dA_layers_sizes=[self.n_features],
+                tie_weights=False,
+                tie_biases=False,
+                encoder_activation_fn='softplus',
+                decoder_activation_fn='softplus',
+                global_decoder_activation_fn='softplus',
+                initialize_W_as_identity=False,
+                initialize_W_prime_as_W_transpose=False,
+                add_noise_to_W=False,
+                noise_limit=0.,
+                solver_type='rmsprop',
+                predict_modifier_type='negative_feedback',
+                solver_kwargs=dict(eta=1.e-4,beta=.7,epsilon=1.e-6),
+                )
+            for layer in self.main_decoder_log_sigma.mlp_layers:
+                self.params = self.params + [layer.W, layer.b]
+                
         for layer in self.main_decoder.mlp_layers:
             self.params = self.params + layer.params
         for layer in self.main_decoder_mu.mlp_layers:
             self.params = self.params + layer.params
-        # Not used in output calibraion, output generation
-        # for layer in self.main_decoder_log_sigma.mlp_layers:
-        #     self.params = self.params + [layer.W, layer.b]
         ######################
         # END CREATE DECODER #
         ######################
@@ -411,7 +414,7 @@ class RVAE:
         # CREATE RECURRENT UNIT #
         #########################
 
-        recurrent_input = T.concatenate([self.phi_x.output(), self.phi_z.output()], axis=1)
+        recurrent_input = utils.concatenate([self.phi_x.output(), self.phi_z.output()], axis=1)
         self.recurrent_layer = RNN.GRU(self.np_rng,
                                        recurrent_input.T,
                                        recurrent_input.T,
@@ -455,7 +458,7 @@ class RVAE:
         def iter_step(x_step, dev, h):
             phi_x = self.phi_x.output_from_input(x_step)
 
-            encoder_input = T.concatenate([phi_x, h[-1]], axis=1)        
+            encoder_input = utils.concatenate([phi_x, h[-1]], axis=1)        
             encoder_output = self.main_encoder.output_from_input(encoder_input)
 
             mu = self.mu_encoder.output_from_input(encoder_output)
@@ -470,13 +473,11 @@ class RVAE:
                                     
             phi_z = self.phi_z.output_from_input(z)
 
-            decoder_input = T.concatenate([phi_z, h[-1]], axis=1)
+            decoder_input = utils.concatenate([phi_z, h[-1]], axis=1)
             decoder_output = self.main_decoder.output_from_input(decoder_input)
             decoder_mu = self.main_decoder_mu.output_from_input(decoder_output)
-            # Not used
-            # decoder_logSigma = self.main_decoder_log_sigma.output_from_input(decoder_output)
 
-            recurrent_input = T.shape_padaxis(T.concatenate([phi_x, phi_z], axis=1), axis=2)            
+            recurrent_input = T.shape_padaxis(utils.concatenate([phi_x, phi_z], axis=1), axis=2)            
             h_t = T.swapaxes(self.recurrent_layer.hidden_output_from_input(recurrent_input), 1, 2)
 
             # KL Divergence
@@ -486,11 +487,16 @@ class RVAE:
             # XXX
             # x_tilde = self.global_decoder.output_from_input(decoder_mu)
             x_tilde = decoder_mu
-            log_p_x_z = T.sum(-1 * T.sum( x_step * T.log(x_tilde) + (1 - x_step)*T.log(1 - x_tilde), axis=0))
 
-            obj = log_p_x_z + KLD
+            if self.GMM_nll:
+                decoder_logSigma = self.main_decoder_log_sigma.output_from_input(decoder_output)
+                nll = GMM(x_step, decoder_mu, decoder_logSigma, coeff)
+            else:
+                nll = cross_entropy( x_step, x_tilde)
+            
+            obj = nll + KLD
         
-            return h_t, obj, x_tilde, log_p_x_z, KLD
+            return h_t, obj, x_tilde, nll, KLD
 
         [h_n, obj, x, log_p_x_z, KLD],inner_updates = theano.scan(
             fn=iter_step,
@@ -624,13 +630,13 @@ class RVAE:
                                     
             phi_z = self.phi_z.output_from_input(z)
 
-            decoder_input = T.concatenate([phi_z, h[-1]], axis=1)
+            decoder_input = utils.concatenate([phi_z, h[-1]], axis=1)
             decoder_output = self.main_decoder.output_from_input(decoder_input)
             decoder_mu = self.main_decoder_mu.output_from_input(decoder_output)
 
             phi_x = self.phi_x.output_from_input(decoder_mu)
 
-            recurrent_input = T.shape_padaxis(T.concatenate([phi_x, phi_z], axis=1), axis=2)            
+            recurrent_input = T.shape_padaxis(utils.concatenate([phi_x, phi_z], axis=1), axis=2)            
             h_t = T.swapaxes(self.recurrent_layer.hidden_output_from_input(recurrent_input), 1, 2)
 
             # log(p(x|z))
@@ -652,4 +658,38 @@ class RVAE:
         x_all0 = theano.function([], x_all[:, 0, :])()
         
         return x_all0
+
+def cross_entropy(y, y_hat):
+    nll = T.sum(-1 * T.sum( y * T.log(y_hat) + (1 - y)*T.log(1 - y_hat), axis=0))
+    return nll
+
+def logsumexp(x, axis=None):
+    x_max = T.max(x, axis=axis, keepdims=True)
+    z = T.log(T.sum(T.exp(x - x_max), axis=axis, keepdims=True)) + x_max
+    return z.sum(axis=axis)
+
+
+def GMM(y, mu, sig, coeff):
+    """
+    Gaussian mixture model negative log-likelihood
+
+    Parameters
+    ----------
+    y     : TensorVariable
+    mu    : FullyConnected (Linear)
+    sig   : FullyConnected (Softplus)
+    coeff : FullyConnected (Softmax)
+    """
+    y = y.dimshuffle(0, 1, 'x')
+    mu = mu.reshape((mu.shape[0],
+                     self.mu_summand_size,
+                     coeff.shape[-1]))
+    sig = sig.reshape((sig.shape[0],
+                       self.mu_summand_size,
+                       coeff.shape[-1]))
+    inner = -0.5 * T.sum(T.sqr(y - mu) / sig**2 + 2 * T.log(sig) +
+                         T.log(2 * np.pi), axis=1)
+    nll = -logsumexp(T.log(coeff) + inner, axis=1)
+
+    return nll
 

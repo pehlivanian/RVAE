@@ -49,50 +49,50 @@ train_set_x = theano.shared(name='train_set_x', value=train_set_x0)
 ###############
 # Layer specs #
 ###############
-# Pytorch
-# num_features        = 28
-# batch_size          = 150
-# n_phi_x_hidden      = 150
-# n_phi_z_hidden      = 150
-# n_latent            = 28
-# n_hidden_prior      = 150
-# n_rec_hidden        = 150
-# n_encoder_hidden    = 150
-# n_decoder_hidden    = 150
-# n_rec_layers        = 3
-# bias                = False
-
 # Theano
 # OLD PARAMS
+# n_features       = 28
+# n_hidden_encoder = [150, 150]
+# n_phi_x_hidden   = [150, 150]
+# n_phi_z_hidden   = [150, 150]
+# n_latent         = [28]
+# n_hidden_prior   = 150
+# n_hidden_decoder = [150, 150]
+# n_rec_hidden     = [150]
+# n_rec_layers     = 3
+
+# n_features       = 28
+# n_hidden_encoder = [15]
+# n_phi_x_hidden   = [15]
+# n_phi_z_hidden   = [15]
+# n_latent         = [28]
+# n_hidden_prior   = 20
+# n_hidden_decoder = [15]
+# n_rec_hidden     = [15]
+# n_rec_layers     = 3
+
+# small
 n_features       = 28
-n_hidden_encoder = [150, 150]
-n_phi_x_hidden   = [150, 150]
-n_phi_z_hidden   = [150, 150]
-n_latent         = [28]
-n_hidden_prior   = 150
-n_hidden_decoder = [150, 150]
-n_rec_hidden     = [150]
-n_rec_layers     = 3
+n_hidden_encoder = [8]
+n_phi_x_hidden   = [8]
+n_phi_z_hidden   = [8]
+n_latent         = [8]
+n_hidden_prior   = 10
+n_hidden_decoder = [8]
+n_rec_hidden     = [8]
+n_rec_layers     = 2
 
+# large
 # n_features       = 28
-# n_hidden_encoder = [25]
-# n_phi_x_hidden   = [25]
-# n_phi_z_hidden   = [25]
-# n_latent         = [28]
-# n_hidden_prior   = 25
-# n_hidden_decoder = [25]
-# n_rec_hidden     = [25]
-# n_rec_layers     = 2
+# n_hidden_encoder = [150, 175, 150]
+# n_phi_x_hidden   = [150, 175, 150]
+# n_phi_z_hidden   = [150, 175, 150]
+# n_latent         = [28, 28]
+# n_hidden_prior   = 150
+# n_hidden_decoder = [150, 175, 150]
+# n_rec_hidden     = [150]
+# n_rec_layers     = 6
 
-# n_features       = 28
-# n_hidden_encoder = [28]
-# n_phi_x_hidden   = [28]
-# n_phi_z_hidden   = [28]
-# n_latent         = [28]
-# n_hidden_prior   = 28
-# n_hidden_decoder = [28]
-# n_rec_hidden     = [28]
-# n_rec_layers     = 2
 
 #################
 # Solver params #
@@ -141,7 +141,9 @@ dev = self.srng.normal((self.batch_size, self.n_latent[-1]))
 
 index = T.lscalar('index')
 model.x = train_set_x[:, 0:batch_size, :]
+# rmsprop updates
 # cost, updates, log_p_x_z, KLD = model.compute_rmsprop_cost_updates()
+# adam updates
 cost, updates, log_p_x_z, KLD = model.compute_adam_cost_updates()
 cost0 = theano.function([], cost)()
 train_rvae = theano.function(
@@ -151,14 +153,15 @@ train_rvae = theano.function(
     givens=[(model.x, train_set_x[:, index*batch_size:(index+1)*batch_size, :])],
     )
 
-num_epochs = range(10)
+# XXX
+epochs = range(1,10)
 num_batches = range(int(N/batch_size))
 report_each = 100
 costs = list()
 log_p_x_zs = list()
 KLDs = list()
 
-for epoch in num_epochs:
+for epoch in epochs:
     print('EPOCH {}'.format(epoch))
     for i in num_batches:
         cost, log_p_x_z, KLD = train_rvae(i)
@@ -166,10 +169,10 @@ for epoch in num_epochs:
         log_p_x_zs.append(log_p_x_z)
         KLDs.append(KLD)
         if not i % report_each:
-            print('Minibatch: {} Avg Cost: {} log_p_x_z: {} KLD: {}'.format(i, np.mean(costs), np.mean(log_p_x_zs), np.mean(KLDs)))
+            print('Minibatch: {} Avg Cost: {:.8} log_p_x_z: {:.8} KLD: {:.8}'.format(i, np.mean(costs), np.mean(log_p_x_zs), np.mean(KLDs)))
             plot.imshow(model.sample(28))
             plot.pause(1e-6)
-    filename = '/home/charles/git/theano_RVAE/RVAE_global_epoch_{}'.format(epoch)
+    filename = '/home/charles/git/theano_RVAE/RVAE_global_small_epoch_{}'.format(epoch)
     f = open(filename, 'wb')
     pickle.dump(model, f)
     f.close()
