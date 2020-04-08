@@ -23,26 +23,6 @@ epsilon = 1e-8
 def relu(x):
     return T.switch(x<0, 0, x)
 
-def _create_weight(dim_input, dim_output, rng, sigma_init):
-    return rng.normal(0,
-                      sigma_init,
-                      (dim_input,
-                       dim_output)).astype(theano.config.floatX)
-def _create_bias(dim_output):
-    return np.zeros(dim_output).astype(theano.config.floatX)
-
-def _create_initial_mu(dim_input, dim_output, rng, var=0.01 ):
-    return rng.normal(0,
-                      var,
-                      (dim_input, dim_output)
-                      ).astype(theano.config.floatX)
-
-def _create_initial_sigma(dim_input, dim_output, rng, var=0.01):
-    return rng.normal(1.0,
-                      var,
-                      (dim_input, dim_output)
-                      ).astype(theano.config.floatX)
-
 def _get_activation(fn_name):
     if fn_name == 'tanh':
         return T.tanh
@@ -78,6 +58,7 @@ class RVAE:
                  n_rec_layers=2,
                  bptt_truncate=-1,
                  GMM_nll=False,
+                 n_coeff=1,
                  rng=None):
 
         self.params = list()
@@ -91,6 +72,10 @@ class RVAE:
         self.srng = T.shared_randomstreams.RandomStreams(seed=SEED)        
         self.rng = theano_rng
         self.GMM_nll = GMM_nll
+        self.n_coeff = 1
+        if self.GMM_nll:
+            self.mu_summand_size = n_features
+            self.n_coeff = n_coeff            
 
         self.bptt_truncate = bptt_truncate
 
@@ -363,7 +348,7 @@ class RVAE:
             input=self.main_decoder.output(),
             symmetric=False,
             n_visible=self.n_hidden_decoder[-1],
-            dA_layers_sizes=[self.n_features],
+            dA_layers_sizes=[self.n_features * self.n_coeff],
             tie_weights=False,
             tie_biases=False,
             encoder_activation_fn='sigmoid',
@@ -385,7 +370,7 @@ class RVAE:
                 input=self.main_decoder.output(),
                 symmetric=False,
                 n_visible=self.n_hidden_decoder[-1],
-                dA_layers_sizes=[self.n_features],
+                dA_layers_sizes=[self.n_features * self.n_coeff],
                 tie_weights=False,
                 tie_biases=False,
                 encoder_activation_fn='softplus',
@@ -399,8 +384,31 @@ class RVAE:
                 predict_modifier_type='negative_feedback',
                 solver_kwargs=dict(eta=1.e-4,beta=.7,epsilon=1.e-6),
                 )
+            self.main_decoder_coeff = dA.SdA(
+                numpy_rng=self.np_rng,
+                theano_rng=theano_rng,
+                input=self.main_decoder.output(),
+                symmetric=False,
+                n_visible=self.n_hidden_decoder[-1],
+                dA_layers_sizes=[self.n_coeff],
+                tie_weights=False,
+                tie_biases=False,
+                encoder_activation_fn='softmax',
+                decoder_activation_fn='softmax',
+                global_decoder_activation_fn='softmax',
+                initialize_W_as_identity=False,
+                initialize_W_prime_as_W_transpose=False,
+                add_noise_to_W=False,
+                noise_limit=0.,
+                solver_type='rmsprop',
+                predict_modifier_type='negative_feedback',
+                solver_kwargs=dict(eta=1.e-4,beta=.7,epsilon=1.e-6),
+                )
+                
             for layer in self.main_decoder_log_sigma.mlp_layers:
-                self.params = self.params + [layer.W, layer.b]
+                self.params = self.params + layer.params
+            for layer in self.main_decoder_coeff.mlp_layers:
+                self.params = self.params + layer.params
                 
         for layer in self.main_decoder.mlp_layers:
             self.params = self.params + layer.params
@@ -479,7 +487,6 @@ class RVAE:
 
             recurrent_input = T.shape_padaxis(utils.concatenate([phi_x, phi_z], axis=1), axis=2)            
             h_t = T.swapaxes(self.recurrent_layer.hidden_output_from_input(recurrent_input), 1, 2)
-
             # KL Divergence
             KLD = self.KLDivergence(mu, logSigma, prior_mu, prior_logSigma)
 
@@ -490,7 +497,9 @@ class RVAE:
 
             if self.GMM_nll:
                 decoder_logSigma = self.main_decoder_log_sigma.output_from_input(decoder_output)
-                nll = GMM(x_step, decoder_mu, decoder_logSigma, coeff)
+                decoder_coeff = self.main_decoder_coeff.output_from_input(decoder_output)
+                nll = GMM_diag(x_step, decoder_mu, decoder_logSigma, decoder_coeff,
+                          self.mu_summand_size, self.n_coeff)
             else:
                 nll = cross_entropy( x_step, x_tilde)
             
@@ -503,7 +512,7 @@ class RVAE:
             sequences=[x_in,
                        T.as_tensor_variable(self.srng.normal((self.n_features, self.batch_size, self.n_latent[-1])), self.h.dtype)],
             truncate_gradient=self.bptt_truncate,
-            outputs_info=[theano.shared(np.zeros(self.h_shape, dtype=self.h.dtype), broadcastable=self.h.broadcastable),
+            outputs_info=[theano.shared(1/self.h_shape[-1] * np.ones(self.h_shape, dtype=self.h.dtype), broadcastable=self.h.broadcastable),
                           None,
                           None,
                           None,
@@ -617,8 +626,13 @@ class RVAE:
 
         return (cost, updates, log_p_x_z, KLD)
 
-
     def sample(self, seq_len):
+        if self.GMM_nll:
+            return self.GMM_sample(seq_len)
+        else:
+            return self.CE_sample(seq_len)
+
+    def CE_sample(self, seq_len):
         def sample_one(h):
             prior = self.prior.output_from_input(h[-1])
             prior_mu = self.prior_mu.output_from_input(prior)
@@ -650,7 +664,7 @@ class RVAE:
 
         [h_all, x_all], sample_updates = theano.scan(
             fn=sample_one,
-            outputs_info=[theano.shared(np.zeros((self.h_shape[0], 1, self.h_shape[2])), broadcastable=self.h.broadcastable),
+            outputs_info=[theano.shared(1/self.h_shape[-1]*np.ones((self.h_shape[0], 1, self.h_shape[2])), broadcastable=self.h.broadcastable),
                           None],
             n_steps=seq_len,            
             )
@@ -659,37 +673,144 @@ class RVAE:
         
         return x_all0
 
+    def GMM_predict(self, x_in):
+
+        def iter_step(x_step, dev, h):
+            phi_x = self.phi_x.output_from_input(x_step)
+
+            encoder_input = utils.concatenate([phi_x, h[-1]], axis=1)        
+            encoder_output = self.main_encoder.output_from_input(encoder_input)
+
+            mu = self.mu_encoder.output_from_input(encoder_output)
+            logSigma = self.log_sigma_encoder.output_from_input(encoder_output)
+
+            prior = self.prior.output_from_input(h[-1])
+            prior_mu = self.prior_mu.output_from_input(prior)
+            prior_logSigma = self.prior_log_sigma.output_from_input(prior)
+
+            # z = mu + T.exp(0.5 * logSigma) * dev
+            z = mu + logSigma * dev
+                                    
+            phi_z = self.phi_z.output_from_input(z)
+
+            decoder_input = utils.concatenate([phi_z, h[-1]], axis=1)
+            decoder_output = self.main_decoder.output_from_input(decoder_input)
+            decoder_mu = self.main_decoder_mu.output_from_input(decoder_output)
+
+            recurrent_input = T.shape_padaxis(utils.concatenate([phi_x, phi_z], axis=1), axis=2)            
+            h_t = T.swapaxes(self.recurrent_layer.hidden_output_from_input(recurrent_input), 1, 2)
+
+            decoder_logSigma = self.main_decoder_log_sigma.output_from_input(decoder_output)
+            decoder_coeff = self.main_decoder_coeff.output_from_input(decoder_output)
+
+            dev_norm = self.srng.normal((self.n_coeff, self.n_features))
+            gaussians = decoder_mu.reshape((self.n_coeff, self.n_features)) + \
+                        decoder_logSigma.reshape((self.n_coeff, self.n_features)) * dev_norm
+            x_tilde = T.dot( decoder_coeff, gaussians)
+            
+            return h_t, x_tilde
+
+        [h_n, x],inner_updates = theano.scan(
+            fn=iter_step,
+            sequences=[x_in,
+                       T.as_tensor_variable(self.srng.normal((self.n_features, self.batch_size, self.n_latent[-1])), self.h.dtype)],
+            truncate_gradient=self.bptt_truncate,
+            outputs_info=[theano.shared(1/self.h_shape[-1] * np.ones(self.h_shape, dtype=self.h.dtype), broadcastable=self.h.broadcastable),
+                          None],
+            )
+
+        x_out = theano.function([], x[:, 0, :])()
+
+        return x_out
+
+        
+    def GMM_sample(self, seq_len):
+        def sample_one(dev, h):
+            prior = self.prior.output_from_input(h[-1])
+            prior_mu = self.prior_mu.output_from_input(prior)
+            prior_logSigma = self.prior_log_sigma.output_from_input(prior)
+
+            # z = prior_mu + T.exp(0.5 * prior_logSigma) * dev
+            z = prior_mu + prior_logSigma * dev
+                                    
+            phi_z = self.phi_z.output_from_input(z)
+
+            decoder_input = utils.concatenate([phi_z, h[-1]], axis=1)
+            decoder_output = self.main_decoder.output_from_input(decoder_input)
+            decoder_mu = self.main_decoder_mu.output_from_input(decoder_output)
+            decoder_logSigma = self.main_decoder_log_sigma.output_from_input(decoder_output)
+            decoder_coeff = self.main_decoder_coeff.output_from_input(decoder_output)
+
+            # Method 1
+            # Treat decoder_coeff as categorical random variables
+            # In this case, the weights are a probability of selection
+            # of that GMM summand
+            # dev_unif = self.srng.uniform()
+            # decoder_coeff_prob = T.cumsum(decoder_coeff)
+            # ind = T.sum(decoder_coeff_prob <= dev_unif)
+            # dev_norm = self.srng.normal((1, self.n_features))
+            # output_mu       = decoder_mu[:, (ind*self.n_features):((ind+1)*self.n_features)]
+            # output_logSigma = decoder_logSigma[:, (ind*self.n_features):((ind+1)*self.n_features)]
+            # x_tilde = output_mu + output_logSigma * dev_norm
+
+            # Method 2            
+            dev_norm = self.srng.normal((self.n_coeff, self.n_features))
+            gaussians = decoder_mu.reshape((self.n_coeff, self.n_features)) + \
+                        decoder_logSigma.reshape((self.n_coeff, self.n_features)) * dev_norm
+            x_tilde = T.dot( decoder_coeff, gaussians)
+            
+            phi_x = self.phi_x.output_from_input(x_tilde)
+
+            recurrent_input = T.shape_padaxis(utils.concatenate([phi_x, phi_z], axis=1), axis=2)            
+            h_t = T.swapaxes(self.recurrent_layer.hidden_output_from_input(recurrent_input), 1, 2)
+
+            # return [h_t[:, -2:-1, :], x_tilde]
+            # for batch_size == 1
+            return [h_t, x_tilde]
+
+        [h_all, x_all], sample_updates = theano.scan(
+            fn=sample_one,
+            sequences=[T.as_tensor_variable(self.srng.normal((self.n_features, self.batch_size, self.n_latent[-1])), self.h.dtype)],
+            outputs_info=[theano.shared(1/self.h_shape[-1]*np.ones((self.h_shape[0], 1, self.h_shape[2])), broadcastable=self.h.broadcastable),
+                          None],
+            n_steps=seq_len,            
+            )
+        
+        x_all0 = theano.function([], x_all[:, 0, :])()
+        
+        return x_all0
+    
 def cross_entropy(y, y_hat):
     nll = T.sum(-1 * T.sum( y * T.log(y_hat) + (1 - y)*T.log(1 - y_hat), axis=0))
     return nll
 
 def logsumexp(x, axis=None):
+    ''' logsumexp trick
+    '''
     x_max = T.max(x, axis=axis, keepdims=True)
-    z = T.log(T.sum(T.exp(x - x_max), axis=axis, keepdims=True)) + x_max
-    return z.sum(axis=axis)
-
-
-def GMM(y, mu, sig, coeff):
-    """
-    Gaussian mixture model negative log-likelihood
-
-    Parameters
-    ----------
-    y     : TensorVariable
-    mu    : FullyConnected (Linear)
-    sig   : FullyConnected (Softplus)
-    coeff : FullyConnected (Softmax)
-    """
-    y = y.dimshuffle(0, 1, 'x')
+    z = T.sum(T.log(T.sum(T.exp(x - x_max), axis=axis, keepdims=True)) + x_max)
+    return z
+    
+def GMM_diag(y, mu, sig, coeff, mu_summand_size, n_coeff):
+    ''' GMM for diagonal covariance matrix, cross-correlations = 0
+    '''
+    y = T.concatenate([y]*n_coeff, axis=0).T.reshape((y.shape[0],
+                                                     mu_summand_size,
+                                                     n_coeff))
     mu = mu.reshape((mu.shape[0],
-                     self.mu_summand_size,
-                     coeff.shape[-1]))
+                     mu_summand_size,
+                     n_coeff))
     sig = sig.reshape((sig.shape[0],
-                       self.mu_summand_size,
-                       coeff.shape[-1]))
-    inner = -0.5 * T.sum(T.sqr(y - mu) / sig**2 + 2 * T.log(sig) +
+                       mu_summand_size,
+                       n_coeff))
+    # Ran into a problem related to penstroke extending to edge of image,
+    # in this case first or last term of inner_terms is large
+    # inner_terms =  (y - mu)**2 / sig**2 + T.log(sig**2) + T.log(2 * np.pi)
+    # inner_terms = inner_terms * T.lt(T.abs_(inner_terms), 100)
+    # inner = -0.5 * T.sum(inner_terms, axis=1)
+    inner = -0.5 * T.sum((y - mu)**2 / sig**2 + T.log(sig**2) +
                          T.log(2 * np.pi), axis=1)
-    nll = -logsumexp(T.log(coeff) + inner, axis=1)
+    nll = -logsumexp(T.log(coeff) + inner, axis=0)
 
     return nll
 
