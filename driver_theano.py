@@ -16,34 +16,30 @@ import RVAE_theano
 # Data #
 ########
 # MNIST dataset
-all_data = load_data('mnist.pkl.gz')
-train_set_x = all_data[0][0] # row major
-train_set_x0 = np.swapaxes(train_set_x.get_value().reshape(-1, 28, 28), 0, 1)
-train_set_x = theano.shared(name='train_set_x', value=train_set_x0)
-(m, N, n) = train_set_x0.shape
+# all_data = load_data('mnist.pkl.gz')
+# train_set_x = all_data[0][0] # row major
+# train_set_x0 = np.swapaxes(train_set_x.get_value().reshape(-1, 28, 28), 0, 1)
+# train_set_x = theano.shared(name='train_set_x', value=train_set_x0)
+# (m, N, n) = train_set_x0.shape
 
 
 # Simulated correlated data
-# num_features = 8
-# num_trials = 1000
-# rows_to_flatten = 25
-# np_rng = np.random.RandomState(44)
-# raw_samp = np_rng.uniform(0.025, 1.15, (num_features,num_trials))
-# covar = np.cov(raw_samp)
-# L = cholesky(covar)
-# z = np.dot( np_rng.uniform( 0.025, 1.15, (500000, num_features)), L)
+np_rng = np.random.RandomState(51)
+low, high = 0.025, 1.15
 
-# Flatten z
-# shp = z.shape
-# num = shp[0]*shp[1]
-# sample_size = num_features*rows_to_flatten
-# stride = num_features
-# z_flat = z.reshape(1, num)
-# z_out = np.zeros((int(1+(num-sample_size)/stride), sample_size))
-# for ind in range(int(1+(num-sample_size)/stride)):
-#     z_out[ind,:] = z_flat[0,(ind*stride):(ind*stride)+sample_size]
-# train_set_x = theano.shared(np.asarray(z_out, dtype=theano.config.floatX),
-#                             borrow=True)
+num_features = 28
+num_rows = 28
+num_trials = 50000
+
+raw_samp = np_rng.normal(low, high, (num_features,num_trials))
+covar = np.cov(raw_samp)
+L = cholesky(covar)
+
+z = np_rng.normal(low, high, (num_rows, num_trials, num_features))
+for ind in range(num_trials):
+    z[:, ind, :] = np.dot(z[:, ind, :], L)    
+train_set_x = theano.shared(np.asarray(z, dtype=theano.config.floatX),
+                            borrow=True)
 
 ###############
 # Layer specs #
@@ -162,7 +158,7 @@ train_rvae = theano.function(
 
 epochs = range(0,10)
 num_batches = range(int(N/batch_size))
-report_each = 100
+report_each = 1
 
 for epoch in epochs:
     print('EPOCH {}'.format(epoch))
@@ -176,17 +172,17 @@ for epoch in epochs:
         KLDs.append(KLD)
         if not i % report_each:
             print('Minibatch: {} Cost: {:.8} Avg Cost: {:.8} log_p_x_z: {:.8} KLD: {:.8}'.format(i, costs[-1], np.mean(costs), np.mean(log_p_x_zs), np.mean(KLDs)))
-            if model.GMM_nll:
-                x_in = train_set_x[:, i*batch_size:(i+1)*batch_size, :]
-                plot.imshow(model.GMM_predict(x_in))
-                plot.pause(1e-6)
-            else:
-                plot.imshow(model.sample(28))
-                plot.pause(1e-6)
-    filename = '/home/charles/git/theano_RVAE/RVAE_global_small_epoch_{}'.format(epoch)
-    f = open(filename, 'wb')
-    pickle.dump(model, f)
-    f.close()
+            # if model.GMM_nll:
+            #     x_in = train_set_x[:, i*batch_size:(i+1)*batch_size, :]
+            #     plot.imshow(model.GMM_predict(x_in))
+            #     plot.pause(1e-6)
+            # else:
+            #     plot.imshow(model.sample(28))
+            #     plot.pause(1e-6)
+    # filename = '/home/charles/git/theano_RVAE/RVAE_global_small_epoch_{}'.format(epoch)
+    # f = open(filename, 'wb')
+    # pickle.dump(model, f)
+    # f.close()
 
 # index = 293
 # x_in = train_set_x[:, index*batch_size:(index+1)*batch_size, :]
