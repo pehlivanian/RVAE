@@ -24,22 +24,21 @@ import RVAE_theano
 
 
 # Simulated correlated data
-np_rng = np.random.RandomState(51)
+# np_rng = np.random.RandomState(51)
 low, high = 0.025, 1.15
-
 num_features = 28
-num_rows = 28
+num_rows = 100
 num_trials = 50000
-
-raw_samp = np_rng.normal(low, high, (num_features,num_trials))
-covar = np.cov(raw_samp)
-L = cholesky(covar)
-
-z = np_rng.normal(low, high, (num_rows, num_trials, num_features))
-for ind in range(num_trials):
-    z[:, ind, :] = np.dot(z[:, ind, :], L)    
+# raw_samp = np_rng.normal(low, high, (num_features,num_trials))
+# covar = np.cov(raw_samp)
+# L = cholesky(covar)
+# z = np_rng.normal(low, high, (num_rows, num_trials, num_features))
+z = np_rng.uniform(low, high, (num_rows, num_trials, num_features))
+# for ind in range(num_trials):
+#     z[:, ind, :] = np.dot(z[:, ind, :], L)    
 train_set_x = theano.shared(np.asarray(z, dtype=theano.config.floatX),
                             borrow=True)
+(m, N, n) = z.shape
 
 ###############
 # Layer specs #
@@ -56,7 +55,7 @@ train_set_x = theano.shared(np.asarray(z, dtype=theano.config.floatX),
 # n_rec_hidden     = [150]
 # n_rec_layers     = 3
 
-# n_features       = 28
+# n_features       = 25
 # n_hidden_encoder = [15]
 # n_phi_x_hidden   = [15]
 # n_phi_z_hidden   = [15]
@@ -84,12 +83,12 @@ train_set_x = theano.shared(np.asarray(z, dtype=theano.config.floatX),
 
 # large
 n_features       = 28
-n_hidden_encoder = [150, 175, 150]
-n_phi_x_hidden   = [150, 175, 150]
-n_phi_z_hidden   = [150, 175, 150]
+n_hidden_encoder = [150, 150]
+n_phi_x_hidden   = [150, 150]
+n_phi_z_hidden   = [150, 150]
 n_latent         = [28, 28]
-n_hidden_prior   = 150
-n_hidden_decoder = [150, 175, 150]
+n_hidden_prior   = 50
+n_hidden_decoder = [150, 150]
 n_rec_hidden     = [150]
 n_rec_layers     = 100
 GMM_nll          = False
@@ -101,8 +100,8 @@ n_coeff          = 1
 #################
 # Solver params, by type
 gd_solver_kwargs = dict(learning_rate=0.1)
-rmsprop_solverKwargs = dict(eta=1.e-3,beta=.8,epsilon=1.e-6)
-adam_solverKwargs = dict(learning_rate=0.0001,beta1=0.9,beta2=0.999,epsilon=1e-8)
+rmsprop_solverKwargs = dict(eta=0.001,beta=0.8,epsilon=1.e-6)
+adam_solverKwargs = dict(learning_rate=0.01,beta1=0.9,beta2=0.999,epsilon=1e-8)
 
 #########
 # Model #
@@ -158,7 +157,7 @@ train_rvae = theano.function(
 
 epochs = range(0,10)
 num_batches = range(int(N/batch_size))
-report_each = 1
+report_each = 200
 
 for epoch in epochs:
     print('EPOCH {}'.format(epoch))
@@ -179,10 +178,10 @@ for epoch in epochs:
             # else:
             #     plot.imshow(model.sample(28))
             #     plot.pause(1e-6)
-    # filename = '/home/charles/git/theano_RVAE/RVAE_global_small_epoch_{}'.format(epoch)
-    # f = open(filename, 'wb')
-    # pickle.dump(model, f)
-    # f.close()
+            # filename = '/home/charles/git/theano_RVAE/RVAE_global_large_epoch_{}_minibatch_{}'.format(epoch, i)
+            f = open(filename, 'wb')
+            pickle.dump(model, f)
+            f.close()
 
 # index = 293
 # x_in = train_set_x[:, index*batch_size:(index+1)*batch_size, :]
