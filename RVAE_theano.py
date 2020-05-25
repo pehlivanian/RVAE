@@ -779,6 +779,9 @@ class RVAE:
         x_all0 = theano.function([], x_all[:, 0, :])()
         
         return x_all0
+
+    def num_params(self):
+        return np.sum(np.prod(param.get_Value().shape for param in self.params))
     
 def cross_entropy(y, y_hat):
     nll = T.sum(-1 * T.sum( y * T.log(y_hat) + (1 - y)*T.log(1 - y_hat), axis=0))
